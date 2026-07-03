@@ -69,6 +69,26 @@ export default function Mod06() {
     return lines.join("\n");
   }, [filled]);
 
+  const promptTextEn = useMemo(() => {
+    const lines: string[] = [
+      'Bad prompt: "Make a formative assessment app."',
+      "",
+      "Revised prompt:",
+    ];
+    if (filled.audience) lines.push("- Audience: 1st-year middle school science teacher");
+    if (filled.context)
+      lines.push("- Class context: right after a formative assessment on the acids and bases unit");
+    if (filled.problem)
+      lines.push("- Problem: not enough time to write individual student feedback");
+    if (filled.input)
+      lines.push("- Input: correct-answer rate, common wrong-answer types, student level");
+    if (filled.process) lines.push("- Processing: rule-based feedback sentence composition");
+    if (filled.output)
+      lines.push("- Output: 3-sentence feedback — encouragement, strength, improvement");
+    if (filled.constraint) lines.push("- Constraints: no student real names, mobile-friendly");
+    return lines.join("\n");
+  }, [filled]);
+
   return (
     <article className="max-w-4xl mx-auto px-5 sm:px-8 py-10">
       <ModuleHeader module={m} />
@@ -218,7 +238,7 @@ export default function Mod06() {
           </div>
           <span className="serif text-xl text-coral">{readiness}%</span>
         </div>
-        <CopyBlock label="프롬프트 미리보기" text={promptText} />
+        <CopyBlock label="프롬프트 미리보기" ko={promptText} en={promptTextEn} />
       </PracticePanel>
 
       <InstructorTip>

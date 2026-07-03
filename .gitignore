@@ -16,6 +16,9 @@ dist-ssr
 .nitro
 *.local
 
+# Secrets — GEMINI_API_KEY가 들어 있으므로 절대 커밋하지 않음
+.env
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars

@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   Paperclip,
   ExternalLink,
+  Languages,
 } from "lucide-react";
 import { Section, PracticePanel } from "@/components/module-ui";
 import { PolicyModal } from "@/components/policy-modal";
@@ -88,6 +89,76 @@ After implementation, test:
 - Korean text encoding
 - consistency between the displayed documents and downloaded files`;
 
+export const FOOTER_PROMPT_KO = `이 웹앱의 모든 페이지에 공통 법적 푸터를 추가해줘.
+
+첨부한 두 Markdown 파일만 유일한 원본으로 사용해:
+1. 이용약관.md
+2. 개인정보처리방침.md
+
+첨부한 문서의 조항을 지어내거나, 다시 쓰거나, 요약하거나, 삭제하지 마.
+
+푸터 내용:
+- 왼쪽: 실제 서비스 이름을 사용한 저작권 표기
+- 가운데: 첨부 문서에 있는 개인정보 보호책임자 또는 서비스 문의 연락처
+- 오른쪽: "이용약관", "개인정보처리방침" 두 개의 링크
+
+구현 요구사항:
+1. 재사용 가능한 공통 푸터 컴포넌트를 하나 만들어.
+2. 전역 앱 레이아웃에서 렌더링해 모든 페이지에 일관되게 표시해.
+3. 개별 페이지 안에 푸터를 수동으로 중복 배치하지 마.
+4. 기존 디자인 시스템의 색상, 타이포그래피, 간격, 반응형 레이아웃과 어울리게 해.
+5. 화면의 모든 문구는 한국어로 유지해.
+6. 데스크톱에서는 가로 3단 구성을 사용해.
+7. 모바일에서는 푸터 내용을 세로로 쌓아.
+8. 위쪽에 은은한 경계선과 충분한 여백을 넣어.
+9. 기존의 모든 페이지, 내비게이션, 데이터, 기능을 그대로 유지해.
+
+사용자가 "이용약관"을 선택하면:
+- 접근성 있는 모달을 열어
+- 이용약관.md의 전체 Markdown 내용을 렌더링해
+- 시행일을 명확히 표시해
+- 인쇄, Markdown 다운로드, 닫기 버튼을 제공해
+
+사용자가 "개인정보처리방침"을 선택하면:
+- 접근성 있는 모달을 열어
+- 개인정보처리방침.md의 전체 Markdown 내용을 렌더링해
+- 시행일을 명확히 표시해
+- 인쇄, Markdown 다운로드, 닫기 버튼을 제공해
+
+모달 요구사항:
+- 오른쪽 위에 닫기 버튼
+- Escape 키로 닫기
+- 배경을 선택하면 닫기
+- 열려 있는 동안 배경 스크롤 잠금
+- 키보드 포커스를 모달 안에 유지
+- 닫은 뒤 원래 푸터 링크로 포커스 복귀
+- 긴 문서를 위한 내부 스크롤 지원
+- 모바일에서는 거의 전체 화면 레이아웃 사용
+- 제목, 문단, 목록, 간격 스타일을 읽기 좋게 제공
+
+다운로드 요구사항:
+- 첨부한 원본 Markdown 내용을 그대로 다운로드
+- UTF-8로 저장해 한국어가 깨지지 않게 유지
+- 실제 .md 파일명 사용
+- 렌더링된 HTML을 다운로드하지 말 것
+
+중요:
+- 앱이 사용하지 않는 데이터 수집 방식을 추가하지 마.
+- 앱이 클라우드 데이터베이스도 사용한다면 localStorage에만 저장한다고 쓰지 마.
+- 닉네임, 학급 코드, 로그인, 분석 도구, 사용자 기록을 저장한다면 개인정보를 처리하지 않는다고 쓰지 마.
+- API 키, secret, 내부 UUID, 비공개 데이터베이스 값을 노출하지 마.
+- 관련 없는 컴포넌트나 페이지를 변경하지 마.
+
+구현 후 테스트할 것:
+- 모든 페이지에서 푸터가 보이는지
+- 두 정책 링크가 모두 열리는지
+- 키보드와 Escape 키 동작
+- 모바일 레이아웃
+- 인쇄 동작
+- Markdown 파일 다운로드
+- 한국어 인코딩
+- 화면의 문서와 다운로드 파일이 일치하는지`;
+
 const EDIT_CHECKLIST = [
   "앱의 정확한 이름과 공개 주소를 입력했는가?",
   "시행일이 실제 공개일과 맞는가?",
@@ -137,6 +208,7 @@ export function PolicyPractice() {
     FINAL_CHECKLIST.map(() => false),
   );
   const [copied, setCopied] = useState(false);
+  const [promptLang, setPromptLang] = useState<"ko" | "en">("en");
   const [preview, setPreview] = useState<null | "terms" | "privacy">(null);
   const termsPrevBtn = useRef<HTMLButtonElement>(null);
   const privacyPrevBtn = useRef<HTMLButtonElement>(null);
@@ -146,7 +218,9 @@ export function PolicyPractice() {
 
   const copyPrompt = async () => {
     try {
-      await navigator.clipboard.writeText(FOOTER_PROMPT);
+      await navigator.clipboard.writeText(
+        promptLang === "ko" ? FOOTER_PROMPT_KO : FOOTER_PROMPT,
+      );
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch {}
@@ -316,29 +390,40 @@ export function PolicyPractice() {
           ④ Lovable에 푸터 제작 요청하기
         </h3>
         <p className="text-body mb-4">
-          수정한 이용약관.md와 개인정보처리방침.md를 첨부한 상태에서 아래 영문
-          프롬프트를 복사해 입력하세요.
+          수정한 이용약관.md와 개인정보처리방침.md를 첨부한 상태에서 아래
+          프롬프트를 복사해 입력하세요. 한국어와 영어 중 편한 버전을 선택할 수
+          있습니다.
         </p>
 
         <div className="bg-surface-dark text-on-dark rounded-lg overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-2 border-b border-white/10">
+          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-white/10">
             <span className="text-xs uppercase tracking-widest text-on-dark-soft font-medium">
-              푸터 제작 프롬프트 (English)
+              푸터 제작 프롬프트 ({promptLang === "ko" ? "한국어" : "English"})
             </span>
-            <button
-              onClick={copyPrompt}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-surface-dark-elevated hover:bg-white/10"
-            >
-              {copied ? (
-                <CheckCheck className="w-3.5 h-3.5" />
-              ) : (
-                <Copy className="w-3.5 h-3.5" />
-              )}
-              {copied ? "복사됨" : "프롬프트 복사"}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPromptLang(promptLang === "ko" ? "en" : "ko")}
+                aria-label={promptLang === "ko" ? "영어로 보기" : "한국어로 보기"}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-surface-dark-elevated hover:bg-white/10"
+              >
+                <Languages className="w-3.5 h-3.5" />
+                {promptLang === "ko" ? "English" : "한국어"}
+              </button>
+              <button
+                onClick={copyPrompt}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-surface-dark-elevated hover:bg-white/10"
+              >
+                {copied ? (
+                  <CheckCheck className="w-3.5 h-3.5" />
+                ) : (
+                  <Copy className="w-3.5 h-3.5" />
+                )}
+                {copied ? "복사됨" : "프롬프트 복사"}
+              </button>
+            </div>
           </div>
           <pre className="px-5 py-4 overflow-x-auto text-xs sm:text-sm leading-relaxed whitespace-pre-wrap font-mono max-h-[420px]">
-            {FOOTER_PROMPT}
+            {promptLang === "ko" ? FOOTER_PROMPT_KO : FOOTER_PROMPT}
           </pre>
         </div>
         {copied && (

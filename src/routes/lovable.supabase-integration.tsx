@@ -1,5 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { Languages as LanguagesIcon } from "lucide-react";
 import step1 from "@/assets/supabase-step-9.png.asset.json";
 import step2 from "@/assets/supabase-step-10.png.asset.json";
 import step3 from "@/assets/supabase-step-11.png.asset.json";
@@ -139,11 +140,23 @@ const STEPS: Step[] = [
   },
 ];
 
-const EXAMPLE_PROMPTS = [
-  "Supabase를 사용해 이메일 회원가입과 로그인 기능을 추가해줘.",
-  "사용자가 작성한 형성평가 기록을 Supabase 데이터베이스에 저장해줘.",
-  "교사는 전체 기록을 보고 학생은 자신의 기록만 볼 수 있도록 권한을 설정해줘.",
-  "Gemini API 키는 Supabase Secret에 저장하고 Edge Function에서만 호출해줘.",
+const EXAMPLE_PROMPTS: { ko: string; en: string }[] = [
+  {
+    ko: "Supabase를 사용해 이메일 회원가입과 로그인 기능을 추가해줘.",
+    en: "Add email sign-up and login using Supabase.",
+  },
+  {
+    ko: "사용자가 작성한 형성평가 기록을 Supabase 데이터베이스에 저장해줘.",
+    en: "Save the formative assessment records that users create to the Supabase database.",
+  },
+  {
+    ko: "교사는 전체 기록을 보고 학생은 자신의 기록만 볼 수 있도록 권한을 설정해줘.",
+    en: "Set permissions so teachers can see all records while students can only see their own.",
+  },
+  {
+    ko: "Gemini API 키는 Supabase Secret에 저장하고 Edge Function에서만 호출해줘.",
+    en: "Store the Gemini API key in a Supabase secret and call it only from an Edge Function.",
+  },
 ];
 
 const CHECKLIST = [
@@ -196,6 +209,7 @@ function SupabaseIntegrationPage() {
   const [activeStep, setActiveStep] = useState<string>("s1");
   const [checked, setChecked] = useState<boolean[]>(() => CHECKLIST.map(() => false));
   const [copied, setCopied] = useState<number | null>(null);
+  const [promptLang, setPromptLang] = useState<"ko" | "en">("ko");
   const [openFaq, setOpenFaq] = useState<number | null>(null);
   const stepRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -457,13 +471,23 @@ function SupabaseIntegrationPage() {
             </li>
           ))}
         </ul>
-        <h3 className="serif text-lg mb-3">바로 써볼 수 있는 예시 프롬프트</h3>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <h3 className="serif text-lg">바로 써볼 수 있는 예시 프롬프트</h3>
+          <button
+            onClick={() => setPromptLang(promptLang === "ko" ? "en" : "ko")}
+            aria-label={promptLang === "ko" ? "영어로 보기" : "한국어로 보기"}
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card cursor-pointer"
+          >
+            <LanguagesIcon className="w-3.5 h-3.5" />
+            {promptLang === "ko" ? "English" : "한국어"}
+          </button>
+        </div>
         <div className="space-y-2">
           {EXAMPLE_PROMPTS.map((p, i) => (
             <div key={i} className="bg-canvas border border-hairline rounded-md p-3 flex items-start justify-between gap-3">
-              <p className="text-sm text-body-strong flex-1">{p}</p>
+              <p className="text-sm text-body-strong flex-1">{p[promptLang]}</p>
               <button
-                onClick={() => copy(p, i)}
+                onClick={() => copy(p[promptLang], i)}
                 className="text-xs px-3 py-1 rounded-md border border-hairline hover:bg-surface-card cursor-pointer whitespace-nowrap"
               >
                 {copied === i ? "복사됨" : "복사"}

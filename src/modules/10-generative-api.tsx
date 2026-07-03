@@ -40,6 +40,30 @@ AI의 역할:
 
 먼저 구현 계획과 필요한 secret 이름을 설명한 뒤 구현하고, 마지막에 정상 흐름과 실패 흐름을 테스트해줘.`;
 
+const SECURE_PROMPT_EN = `Add a generative AI feedback feature to the current app.
+
+Important security requirements:
+- Never expose the API key in frontend code, the browser, or localStorage.
+- Store the secret key in a Lovable Cloud secret or Supabase secret, and use it only in a server function / Edge Function.
+- A server function receives the user input, calls the generative AI API, and returns only the result to the frontend.
+
+Role of the AI:
+- Analyze the subject, grade, learning topic, student response, and achievement level entered by the teacher.
+- Always return the result in JSON format.
+- Use exactly four fields: encouragement, strength, improvement, nextAction.
+- Do not label or diagnose the student.
+- Focus on observable evidence and the next learning action.
+- If the input appears to contain personal information, stop generating and return a warning.
+
+App behavior:
+- Show a loading state while generating.
+- On failure, show a friendly Korean error message and a retry button.
+- Handle empty responses and malformed output.
+- Validate the JSON structure before displaying the result.
+- Do not remove the existing UI or the mock-response feature; keep them as a fallback when the API fails.
+
+Explain the implementation plan and the required secret names first, then implement, and finally test both the success flow and the failure flow.`;
+
 export default function Mod10() {
   // mini designer
   const [inputType, setInputType] = useState("");
@@ -68,6 +92,28 @@ ${forbidden || "학생 개인정보·민감 정보 포함 금지"}
 ${onFail || "이해하기 쉬운 한국어 오류와 다시 시도 버튼"}
 
 먼저 흐름을 설명한 뒤 구현하고, 정상/실패 흐름을 모두 테스트해줘.`;
+  }, [inputType, task, format, forbidden, onFail]);
+
+  const generatedEn = useMemo(() => {
+    if (!inputType && !task) return "";
+    return `Add the following AI feature to the current app. Keep the secret key only in a server secret and call it from a server function.
+
+[Input]
+${inputType || "(needs definition)"}
+
+[Task for the AI]
+${task || "(needs definition)"}
+
+[Output format]
+${format || "(needs definition)"}
+
+[Not allowed]
+${forbidden || "Do not include student personal or sensitive information"}
+
+[On failure]
+${onFail || "Show a clear Korean error message and a retry button"}
+
+Explain the flow first, then implement it, and test both the success and failure flows.`;
   }, [inputType, task, format, forbidden, onFail]);
 
   return (
@@ -126,7 +172,7 @@ ${onFail || "이해하기 쉬운 한국어 오류와 다시 시도 버튼"}
       </Section>
 
       <Section title="안전한 구현 프롬프트">
-        <CopyBlock label="보안·구현 프롬프트" text={SECURE_PROMPT} />
+        <CopyBlock label="보안·구현 프롬프트" ko={SECURE_PROMPT} en={SECURE_PROMPT_EN} />
       </Section>
 
       <Section title="좋은 AI 기능 설계 6요소">
@@ -158,7 +204,7 @@ ${onFail || "이해하기 쉬운 한국어 오류와 다시 시도 버튼"}
 
         {generated && (
           <div className="mt-4">
-            <CopyBlock label="생성된 프롬프트" text={generated} />
+            <CopyBlock label="생성된 프롬프트" ko={generated} en={generatedEn} />
           </div>
         )}
       </PracticePanel>

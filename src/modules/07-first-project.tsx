@@ -2,8 +2,6 @@ import { useMemo, useState } from "react";
 import {
   X,
   ArrowRight,
-  Copy,
-  CheckCheck,
   ExternalLink,
   ChevronDown,
   PencilLine,
@@ -12,7 +10,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 import { moduleByNumber } from "@/data/course";
-import { ModuleHeader, Section, KeyMessage, ModuleNavigation } from "@/components/module-ui";
+import { ModuleHeader, Section, KeyMessage, ModuleNavigation, CopyBlock } from "@/components/module-ui";
 import chatbotExample from "@/assets/ai-chatbot-example.png.asset.json";
 
 const m = moduleByNumber(7)!;
@@ -37,13 +35,15 @@ const QUESTION_TYPES = ["설명하기", "이유 말하기", "비교하기", "예
 type SchoolLevel = (typeof SCHOOL_LEVELS)[number];
 type QuestionType = (typeof QUESTION_TYPES)[number];
 
-function buildPrompt(input: {
+type PromptInput = {
   level: SchoolLevel;
   subject: string;
   grade: string;
   topic: string;
   qtype: QuestionType;
-}) {
+};
+
+function buildPrompt(input: PromptInput) {
   return `Create a simple Korean-language formative assessment feedback web app for a teacher.
 
 Teaching context:
@@ -98,6 +98,61 @@ Do not add:
 Make the layout clean, mobile-friendly, and easy for a teacher to use immediately.`;
 }
 
+function buildPromptKo(input: PromptInput) {
+  return `교사를 위한 간단한 한국어 형성평가 피드백 웹앱을 만들어줘.
+
+수업 정보:
+- 학교급: ${input.level}
+- 교과: ${input.subject}
+- 학년: ${input.grade}
+- 학습 주제: ${input.topic}
+- 질문 방식: ${input.qtype}
+
+중요:
+- 화면의 모든 문구, 버튼, 안내, 예시와 AI가 만드는 피드백은 한국어로 해줘.
+- 앱은 아주 단순하게, 한 페이지로만 만들어줘.
+- 피드백 생성에는 Lovable AI를 사용해줘.
+- 학생 이름이나 개인정보는 요구하지 마.
+
+앱은 학습 주제와 질문 방식에 맞는 형성평가 질문 하나를 보여줘야 해.
+
+사용자 흐름:
+형성평가 질문
+→ 익명 학생 답변
+→ 피드백 생성
+→ 결과 복사
+
+포함할 것:
+- 수정 가능한 형성평가 질문 1개
+- 학생 답변 입력창 1개
+- "예시 답변 넣기" 버튼
+- "피드백 만들기" 버튼
+- 피드백 결과 영역
+- "결과 복사" 버튼
+
+피드백은 짧은 세 부분으로만 생성해줘:
+1. 잘한 점
+2. 보완할 점
+3. 다음 학습 한 가지
+
+각 부분은 간결하고 실용적으로 써줘.
+
+다음 안내 문구를 화면에 표시해줘:
+"학생 실명과 개인정보를 입력하지 마세요. AI가 만든 피드백은 교사가 최종 확인해야 합니다."
+
+추가하지 말 것:
+- 로그인
+- 데이터베이스
+- 학생 계정
+- 학급 관리
+- 파일 업로드
+- 순위표
+- 여러 페이지
+- 복잡한 설정
+
+교사가 바로 사용할 수 있도록 화면은 깔끔하고 모바일 친화적으로 만들어줘.`;
+}
+
 const SUCCESS_ITEMS = [
   "앱 화면이 열린다.",
   "학생 답변을 입력할 수 있다.",
@@ -107,8 +162,12 @@ const SUCCESS_ITEMS = [
 
 const STUCK_SMALL_EXAMPLE =
   "예시 답변 넣기 버튼이 작동하지 않습니다. 다른 화면은 바꾸지 말고 이 버튼만 수정해줘.";
+const STUCK_SMALL_EXAMPLE_EN =
+  'The "예시 답변 넣기" button is not working. Fix only this button and do not change any other part of the screen.';
 const STUCK_STRUCTURAL_EXAMPLE =
   "현재 앱 화면, 문제점, 원하는 흐름을 설명할 테니 Lovable에 붙여 넣을 수정 프롬프트를 작성해줘. 앱 UI는 한국어로 유지하고 다른 기능은 변경하지 않도록 해줘.";
+const STUCK_STRUCTURAL_EXAMPLE_EN =
+  "I will describe the current app screen, the problem, and the flow I want. Write a revision prompt I can paste into Lovable. Keep the app UI in Korean and do not change any other features.";
 
 export default function Mod07() {
   const [level, setLevel] = useState<SchoolLevel>("중학교");
@@ -117,23 +176,14 @@ export default function Mod07() {
   const [topic, setTopic] = useState("");
   const [qtype, setQtype] = useState<QuestionType>("설명하기");
 
-  const [prompt, setPrompt] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState<{ en: string; ko: string } | null>(null);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState<string | null>(null);
   const [zoomed, setZoomed] = useState(false);
   const [showChat, setShowChat] = useState(false);
 
   const canGenerate =
     Boolean(level) && subject.trim() && grade.trim() && topic.trim() && Boolean(qtype);
-
-  const copy = async (id: string, text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(id);
-      setTimeout(() => setCopied(null), 1600);
-    } catch {}
-  };
 
   const generate = () => {
     if (!canGenerate) {
@@ -145,9 +195,14 @@ export default function Mod07() {
     setPrompt(null);
     // 짧은 대기로 생성 감각 유지
     setTimeout(() => {
-      setPrompt(
-        buildPrompt({ level, subject: subject.trim(), grade: grade.trim(), topic: topic.trim(), qtype }),
-      );
+      const input = {
+        level,
+        subject: subject.trim(),
+        grade: grade.trim(),
+        topic: topic.trim(),
+        qtype,
+      };
+      setPrompt({ en: buildPrompt(input), ko: buildPromptKo(input) });
       setGenerating(false);
     }, 700);
   };
@@ -160,29 +215,16 @@ export default function Mod07() {
   const promptCard = useMemo(() => {
     if (!prompt) return null;
     return (
-      <div className="bg-surface-dark text-on-dark rounded-lg overflow-hidden mt-6">
-        <div className="flex items-center justify-between px-5 py-3 border-b border-white/10">
-          <span className="text-xs uppercase tracking-widest text-on-dark-soft font-medium">
-            Lovable에 붙여 넣을 영문 프롬프트
-          </span>
-          <button
-            onClick={() => copy("prompt", prompt)}
-            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-surface-dark-elevated hover:bg-white/10"
-          >
-            {copied === "prompt" ? (
-              <CheckCheck className="w-3.5 h-3.5" />
-            ) : (
-              <Copy className="w-3.5 h-3.5" />
-            )}
-            {copied === "prompt" ? "복사됨" : "복사"}
-          </button>
-        </div>
-        <pre className="px-5 py-4 overflow-x-auto text-sm leading-relaxed whitespace-pre-wrap font-mono">
-          {prompt}
-        </pre>
+      <div className="mt-6">
+        <CopyBlock
+          label="Lovable에 붙여 넣을 프롬프트"
+          en={prompt.en}
+          ko={prompt.ko}
+          initial="en"
+        />
       </div>
     );
-  }, [prompt, copied]);
+  }, [prompt]);
 
   return (
     <article className="max-w-4xl mx-auto px-5 sm:px-8 py-10">
@@ -395,32 +437,14 @@ export default function Mod07() {
             <p className="text-sm text-body mb-3">
               버튼이 안 눌리거나, 문구·색상·간격을 바꾸는 정도라면 화면을 캡처해 Lovable에 바로 요청하세요.
             </p>
-            <pre className="bg-surface-dark text-on-dark rounded-md p-3 text-xs leading-relaxed whitespace-pre-wrap font-mono mb-3">
-              {STUCK_SMALL_EXAMPLE}
-            </pre>
-            <button
-              onClick={() => copy("stuck-small", STUCK_SMALL_EXAMPLE)}
-              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-coral text-white hover:bg-coral-active"
-            >
-              {copied === "stuck-small" ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied === "stuck-small" ? "복사됨" : "예시 복사"}
-            </button>
+            <CopyBlock label="예시" ko={STUCK_SMALL_EXAMPLE} en={STUCK_SMALL_EXAMPLE_EN} />
           </div>
           <div className="rounded-lg p-6 bg-surface-card">
             <h3 className="serif text-lg mb-2">구조를 바꿔야 한다면 AI 챗봇에 먼저 질문</h3>
             <p className="text-sm text-body mb-3">
               여러 기능을 바꾸거나 화면 흐름을 다시 설계해야 한다면, ChatGPT 같은 AI 챗봇에 현재 상황을 설명하고 Lovable용 프롬프트를 만들어 달라고 요청하세요.
             </p>
-            <pre className="bg-surface-dark text-on-dark rounded-md p-3 text-xs leading-relaxed whitespace-pre-wrap font-mono mb-3">
-              {STUCK_STRUCTURAL_EXAMPLE}
-            </pre>
-            <button
-              onClick={() => copy("stuck-struct", STUCK_STRUCTURAL_EXAMPLE)}
-              className="inline-flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-md bg-coral text-white hover:bg-coral-active"
-            >
-              {copied === "stuck-struct" ? <CheckCheck className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied === "stuck-struct" ? "복사됨" : "예시 복사"}
-            </button>
+            <CopyBlock label="예시" ko={STUCK_STRUCTURAL_EXAMPLE} en={STUCK_STRUCTURAL_EXAMPLE_EN} />
           </div>
         </div>
         <p className="text-sm text-body mt-4">

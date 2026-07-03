@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, Check, AlertTriangle, Copy, CheckCheck, Lightbulb, ChevronDown } from "lucide-react";
+import { ChevronLeft, ChevronRight, Check, AlertTriangle, Copy, CheckCheck, Lightbulb, ChevronDown, Languages } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { moduleByNumber, type Module } from "@/data/course";
 import { useProgress } from "@/hooks/use-progress";
@@ -102,20 +102,28 @@ export function ConceptCard({
 }
 
 // ===== Copy block =====
+// ko와 en을 모두 주면 한/영 전환 버튼이 생기고, 하나만 주면(또는 text만 주면) 단일 언어로 표시됩니다.
 export function CopyBlock({
   label,
   text,
-  language,
-  korean,
+  ko,
+  en,
+  initial,
 }: {
   label?: string;
-  text: string;
-  language?: string;
-  korean?: string;
+  text?: string;
+  ko?: string;
+  en?: string;
+  initial?: "ko" | "en";
 }) {
+  const koText = ko ?? (en === undefined ? text : undefined);
+  const enText = en;
+  const bilingual = koText !== undefined && enText !== undefined;
   const [copied, setCopied] = useState(false);
-  const [lang, setLang] = useState<"ko" | "en">(korean ? "ko" : "en");
-  const shown = lang === "ko" && korean ? korean : text;
+  const [lang, setLang] = useState<"ko" | "en">(
+    initial ?? (koText !== undefined ? "ko" : "en"),
+  );
+  const shown = (lang === "ko" ? koText : enText) ?? koText ?? enText ?? "";
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(shown);
@@ -127,33 +135,24 @@ export function CopyBlock({
     <div className="bg-surface-dark text-on-dark rounded-lg overflow-hidden my-4">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3 border-b border-white/10">
         <span className="text-xs uppercase tracking-widest text-on-dark-soft font-medium">
-          {label || (language ?? "prompt")}
-          {korean && (
+          {label || "prompt"}
+          {bilingual && (
             <span className="ml-2 normal-case tracking-normal text-on-dark-soft/80">
-              · {lang === "ko" ? "한국어 설명" : "English (Lovable 입력용)"}
+              · {lang === "ko" ? "한국어" : "English"}
             </span>
           )}
         </span>
         <div className="flex items-center gap-2">
-          {korean && (
-            <div className="inline-flex rounded-md bg-surface-dark-elevated p-0.5 text-xs">
-              <button
-                type="button"
-                onClick={() => setLang("ko")}
-                className={`px-2 py-1 rounded ${lang === "ko" ? "bg-coral text-white" : "text-on-dark-soft hover:text-on-dark"}`}
-                aria-pressed={lang === "ko"}
-              >
-                한국어
-              </button>
-              <button
-                type="button"
-                onClick={() => setLang("en")}
-                className={`px-2 py-1 rounded ${lang === "en" ? "bg-coral text-white" : "text-on-dark-soft hover:text-on-dark"}`}
-                aria-pressed={lang === "en"}
-              >
-                English
-              </button>
-            </div>
+          {bilingual && (
+            <button
+              type="button"
+              onClick={() => setLang(lang === "ko" ? "en" : "ko")}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-surface-dark-elevated hover:bg-white/10 transition-colors"
+              aria-label={lang === "ko" ? "영어로 보기" : "한국어로 보기"}
+            >
+              <Languages className="w-3.5 h-3.5" />
+              {lang === "ko" ? "English" : "한국어"}
+            </button>
           )}
           <button
             onClick={copy}
@@ -168,11 +167,6 @@ export function CopyBlock({
       <pre className="px-5 py-4 overflow-x-auto text-sm leading-relaxed whitespace-pre-wrap font-mono">
         {shown}
       </pre>
-      {korean && lang === "ko" && (
-        <p className="px-5 pb-3 text-xs text-on-dark-soft">
-          이 화면은 이해를 돕는 한국어 설명입니다. Lovable에 붙여 넣을 때는 English 탭의 영문 프롬프트를 사용하세요.
-        </p>
-      )}
     </div>
   );
 }

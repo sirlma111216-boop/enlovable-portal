@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText } from "ai";
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
 export type UpgradePrdInput = {
@@ -114,14 +115,82 @@ Use this exact structure (Korean headings):
 ## 15. 완료 기준
 - Lovable에서 MVP가 완성되었다고 판단할 조건`;
 
+// 외부 Gemini API 키가 있으면 그것을 우선 사용하고,
+// 없으면 Lovable Cloud가 주입하는 내장 AI Gateway로 폴백합니다.
+function createPrdModel() {
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    const gemini = createOpenAICompatible({
+      name: "gemini",
+      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+      apiKey: geminiKey,
+    });
+    return gemini(process.env.GEMINI_MODEL || "gemini-3.5-flash");
+  }
+  const lovableKey = process.env.LOVABLE_API_KEY;
+  if (!lovableKey) throw new Error("Missing GEMINI_API_KEY or LOVABLE_API_KEY");
+  return createLovableAiGatewayProvider(lovableKey)("google/gemini-3-flash-preview");
+}
+
+const REVIEW_SYSTEM_PROMPT = `You are an experienced educational product mentor. A teacher has written a draft PRD for a small classroom web app that will be built with Lovable. Your job is to REVIEW the draft — do not rewrite it.
+
+Rules:
+- Never invent new features, users, or requirements. Respect the teacher's educational intention.
+- Be specific: reference the teacher's own words when pointing something out.
+- Evaluate whether the MVP is small enough: 3 or fewer core features, buildable in about 60 minutes.
+- Check privacy and AI ethics: no student real names or sensitive data, teacher reviews all AI output, fallback behavior on failure.
+- For every missing or vague item, turn it into ONE concrete question the teacher can answer in a sentence.
+- Warm, encouraging Korean. The teacher is not a developer.
+- Output Korean Markdown. Keep the whole review under 600 words. Do not wrap the result in a code fence.
+
+Use this exact structure (Korean headings):
+
+# PRD 점검 결과
+
+## 총평
+(2~3문장)
+
+## 잘된 점
+(2~4개 목록)
+
+## 보완이 필요한 부분
+(항목별로 "무엇이 — 왜 — 이렇게 보완" 형식의 목록)
+
+## 개인정보·윤리 점검
+(문제 없으면 "확인됨"과 근거 한 줄, 위험이 보이면 구체적으로)
+
+## 업그레이드 전에 답해 볼 질문
+(3~5개, 번호 목록)
+
+## 준비도
+(다음 중 하나만: "바로 업그레이드해도 좋습니다" / "몇 가지 보완 후 업그레이드를 권합니다" / "핵심 항목을 먼저 채워 주세요" — 이유 한 문장과 함께)`;
+
+export const reviewPrd = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => data as UpgradePrdInput)
+  .handler(async ({ data }) => {
+    const model = createPrdModel();
+
+    const userPrompt = `모듈 2에서 가져온 배경 맥락:
+${JSON.stringify(data.module2Context, null, 2)}
+
+교사가 작성한 PRD 원본:
+${JSON.stringify(data.teacherPrd, null, 2)}
+
+위 PRD 초안을 지정된 구조로 점검해 주세요. PRD를 다시 써 주지 말고, 점검 결과만 한국어 Markdown으로 작성해 주세요.`;
+
+    const { text } = await generateText({
+      model,
+      system: REVIEW_SYSTEM_PROMPT,
+      prompt: userPrompt,
+    });
+
+    return { markdown: text };
+  });
+
 export const upgradePrd = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as UpgradePrdInput)
   .handler(async ({ data }) => {
-    const key = process.env.LOVABLE_API_KEY;
-    if (!key) throw new Error("Missing LOVABLE_API_KEY");
-
-    const gateway = createLovableAiGatewayProvider(key);
-    const model = gateway("google/gemini-3-flash-preview");
+    const model = createPrdModel();
 
     const userPrompt = `모듈 2에서 가져온 배경 맥락 (그대로 반복하지 말고 의미만 반영):
 ${JSON.stringify(data.module2Context, null, 2)}

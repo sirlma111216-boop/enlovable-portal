@@ -10,7 +10,7 @@ import {
   ModuleNavigation,
 } from "@/components/module-ui";
 import { useLocalStorage } from "@/hooks/use-local-storage";
-import { upgradePrd } from "@/lib/prd.functions";
+import { upgradePrd, reviewPrd } from "@/lib/prd.functions";
 
 const m = moduleByNumber(8)!;
 
@@ -46,6 +46,7 @@ type TeacherPrd = {
 type Store = {
   module2Imported: Module2Context;
   teacherPrd: TeacherPrd;
+  prdReview: string;
   upgradedPrd: string;
   step: number;
   lastSavedAt: string;
@@ -80,6 +81,7 @@ const emptyPrd: TeacherPrd = {
 const initialStore: Store = {
   module2Imported: { repeatTime: "", studentStuck: "", toolGap: "" },
   teacherPrd: emptyPrd,
+  prdReview: "",
   upgradedPrd: "",
   step: 1,
   lastSavedAt: "",
@@ -88,8 +90,9 @@ const initialStore: Store = {
 const STEPS = [
   { n: 1, label: "모듈 2 반영" },
   { n: 2, label: "PRD 작성" },
-  { n: 3, label: "한 화면에 보기" },
-  { n: 4, label: "AI 업그레이드" },
+  { n: 3, label: "원본 보기" },
+  { n: 4, label: "AI 점검" },
+  { n: 5, label: "AI 업그레이드" },
 ];
 
 export default function Mod08() {
@@ -179,12 +182,22 @@ export default function Mod08() {
             prd={store.teacherPrd}
             onBack={() => setStep(2)}
             onNext={() => setStep(4)}
+            onSkipToUpgrade={() => setStep(5)}
           />
         )}
         {store.step === 4 && (
-          <Step4
+          <Step4Review
             store={store}
             onBack={() => setStep(3)}
+            onEdit={() => setStep(2)}
+            onNext={() => setStep(5)}
+            onSaveReview={(md) => setStore({ ...store, prdReview: md })}
+          />
+        )}
+        {store.step === 5 && (
+          <Step5Upgrade
+            store={store}
+            onBack={() => setStep(4)}
             onSaveUpgraded={(md) => setStore({ ...store, upgradedPrd: md })}
           />
         )}
@@ -515,18 +528,19 @@ function Step2({
 
 // ===== Step 3 =====
 function Step3({
-  prd, onBack, onNext,
+  prd, onBack, onNext, onSkipToUpgrade,
 }: {
   prd: TeacherPrd;
   onBack: () => void;
   onNext: () => void;
+  onSkipToUpgrade: () => void;
 }) {
   const missing = requiredMissing(prd);
 
   return (
     <StepShell
-      title="교사가 작성한 PRD"
-      description="AI가 아직 다듬지 않은 원본 PRD입니다. 인쇄하거나 다음 단계에서 AI로 업그레이드할 수 있습니다."
+      title="교사가 작성한 PRD 원본"
+      description="AI가 아직 손대지 않은 원본 PRD입니다. 다음 단계에서 AI에게 점검을 받은 뒤 업그레이드할 수 있습니다."
     >
       <div className="flex flex-wrap gap-2 mb-4 no-print">
         <button onClick={onBack} className="inline-flex items-center gap-1.5 text-sm px-3 py-2 rounded-md border border-hairline hover:bg-surface-card">
@@ -587,30 +601,38 @@ function Step3({
         </PrdBlock>
       </div>
 
-      {/* Upgrade CTA */}
+      {/* Review CTA */}
       <div className="mt-8 bg-surface-cream-strong border-2 border-coral rounded-lg p-6 no-print">
-        <h3 className="serif text-xl mb-2">AI에게 보내 PRD 업그레이드하기</h3>
+        <h3 className="serif text-xl mb-2">AI에게 PRD 점검받기</h3>
         <p className="text-sm text-body mb-2">
-          내가 작성한 내용과 모듈 2의 수업 아이디어를 바탕으로, Lovable이 더 정확하게 이해할 수 있는 PRD로 정리합니다.
+          업그레이드 전에, 작성한 PRD에서 잘된 점과 빠진 부분, 개인정보·윤리 위험을 AI가 먼저 점검해 드립니다.
         </p>
         <p className="text-sm text-coral font-medium mb-4">
-          새로운 앱 아이디어를 임의로 추가하는 것이 아니라, 교사가 작성한 내용을 명확하고 구체적으로 다듬습니다.
+          PRD를 다시 써 주는 것이 아니라, 원본을 그대로 둔 채 보완할 점만 짚어 줍니다.
         </p>
         {missing.length > 0 && (
           <div className="flex items-start gap-2 bg-canvas rounded-md p-3 mb-4 border border-hairline">
             <AlertCircle className="w-4 h-4 text-error shrink-0 mt-0.5" />
             <div className="text-xs text-body">
               다음 필수 항목이 비어 있습니다: <strong>{missing.join(", ")}</strong>
-              <br />비어 있어도 진행할 수 있지만, 채워야 더 좋은 결과가 나옵니다.
+              <br />비어 있어도 진행할 수 있지만, 채워야 더 좋은 점검 결과가 나옵니다.
             </div>
           </div>
         )}
-        <button
-          onClick={onNext}
-          className="inline-flex items-center gap-2 px-6 py-3 rounded-md bg-coral text-white hover:bg-coral-active font-medium"
-        >
-          <Sparkles className="w-4 h-4" /> AI로 PRD 업그레이드
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={onNext}
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-md bg-coral text-white hover:bg-coral-active font-medium"
+          >
+            <Sparkles className="w-4 h-4" /> AI로 점검받기
+          </button>
+          <button
+            onClick={onSkipToUpgrade}
+            className="text-sm px-4 py-3 rounded-md text-muted-text hover:text-ink hover:bg-surface-card"
+          >
+            점검 없이 바로 업그레이드 →
+          </button>
+        </div>
       </div>
 
       <StepNav onBack={onBack} />
@@ -618,8 +640,119 @@ function Step3({
   );
 }
 
-// ===== Step 4 =====
-function Step4({
+// ===== Step 4 — AI 점검 =====
+function Step4Review({
+  store, onBack, onEdit, onNext, onSaveReview,
+}: {
+  store: Store;
+  onBack: () => void;
+  onEdit: () => void;
+  onNext: () => void;
+  onSaveReview: (md: string) => void;
+}) {
+  const review = useServerFn(reviewPrd);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [autoStarted, setAutoStarted] = useState(false);
+
+  const md = store.prdReview ?? "";
+
+  const run = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await review({
+        data: {
+          module2Context: store.module2Imported,
+          teacherPrd: store.teacherPrd as unknown as Record<string, unknown>,
+        },
+      });
+      onSaveReview(res.markdown);
+    } catch (e) {
+      console.error(e);
+      setError("PRD 점검 중 문제가 발생했습니다. 작성한 내용은 그대로 보관되어 있습니다. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 점검 결과가 없으면 진입 시 자동 실행
+  useEffect(() => {
+    if (!md && !autoStarted) {
+      setAutoStarted(true);
+      run();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <StepShell
+      title="AI가 점검한 PRD"
+      description="원본 PRD는 그대로 두고, 보완하면 좋은 점만 짚어 드립니다. 점검 결과를 반영해 내용을 수정하거나, 바로 업그레이드로 넘어갈 수 있습니다."
+    >
+      <div className="flex flex-wrap gap-2 mb-4">
+        <Badge>원본 유지</Badge>
+        <Badge>보완점·질문 제시</Badge>
+        <Badge>개인정보·윤리 점검</Badge>
+      </div>
+
+      <div aria-live="polite" className="min-h-[200px]">
+        {loading && (
+          <div className="bg-surface-card rounded-lg p-8 text-center">
+            <Loader2 className="w-6 h-6 animate-spin text-coral mx-auto mb-3" />
+            <p className="text-sm text-body">작성하신 PRD를 꼼꼼히 점검하고 있어요...</p>
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="bg-error/5 border border-error/30 rounded-lg p-5 mb-4">
+            <p className="text-sm text-error mb-3">{error}</p>
+            <button onClick={run} className="text-sm px-4 py-2 rounded-md bg-coral text-white hover:bg-coral-active">
+              다시 시도
+            </button>
+          </div>
+        )}
+
+        {md && !loading && (
+          <>
+            <article className="bg-canvas border border-hairline rounded-lg p-6 sm:p-8 prose-prd overflow-x-auto">
+              <PrdMarkdown source={md} />
+            </article>
+
+            <div className="mt-6 grid sm:grid-cols-2 gap-3">
+              <button
+                onClick={onEdit}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-md border border-hairline hover:bg-surface-card font-medium"
+              >
+                <ArrowLeft className="w-4 h-4" /> 점검 내용 반영해 수정하기
+              </button>
+              <button
+                onClick={onNext}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-md bg-coral text-white hover:bg-coral-active font-medium"
+              >
+                <Sparkles className="w-4 h-4" /> AI로 업그레이드하기
+              </button>
+            </div>
+
+            <div className="flex flex-wrap gap-2 mt-4 justify-center">
+              <button onClick={onBack} className="text-xs px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card">
+                원본 PRD 보기
+              </button>
+              <button onClick={run} className="text-xs px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card">
+                다시 점검받기
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <StepNav onBack={onBack} onNext={md ? onNext : undefined} nextLabel="다음: AI 업그레이드" />
+    </StepShell>
+  );
+}
+
+// ===== Step 5 — AI 업그레이드 =====
+function Step5Upgrade({
   store, onBack, onSaveUpgraded,
 }: {
   store: Store;
@@ -747,10 +880,10 @@ function Step4({
 
             <div className="flex flex-wrap gap-2 mt-6 justify-center">
               <button onClick={onBack} className="text-xs px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card">
-                원본 PRD 보기
+                AI 점검 결과 보기
               </button>
               <button onClick={run} className="text-xs px-3 py-1.5 rounded-md border border-hairline hover:bg-surface-card">
-                내용을 수정하고 다시 만들기
+                다시 업그레이드하기
               </button>
             </div>
           </>
