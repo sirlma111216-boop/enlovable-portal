@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { generateText } from "ai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import { createLovableAiGatewayProvider } from "./ai-gateway.server";
 
 export type UpgradePrdInput = {
   module2Context: {
@@ -115,21 +114,17 @@ Use this exact structure (Korean headings):
 ## 15. 완료 기준
 - Lovable에서 MVP가 완성되었다고 판단할 조건`;
 
-// 외부 Gemini API 키가 있으면 그것을 우선 사용하고,
-// 없으면 Lovable Cloud가 주입하는 내장 AI Gateway로 폴백합니다.
+// 외부 Gemini API를 사용합니다.
+// 로컬: .env.local의 GEMINI_API_KEY / 배포: Cloudflare Variables & Secrets에 등록
 function createPrdModel() {
   const geminiKey = process.env.GEMINI_API_KEY;
-  if (geminiKey) {
-    const gemini = createOpenAICompatible({
-      name: "gemini",
-      baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-      apiKey: geminiKey,
-    });
-    return gemini(process.env.GEMINI_MODEL || "gemini-3.5-flash");
-  }
-  const lovableKey = process.env.LOVABLE_API_KEY;
-  if (!lovableKey) throw new Error("Missing GEMINI_API_KEY or LOVABLE_API_KEY");
-  return createLovableAiGatewayProvider(lovableKey)("google/gemini-3-flash-preview");
+  if (!geminiKey) throw new Error("Missing GEMINI_API_KEY");
+  const gemini = createOpenAICompatible({
+    name: "gemini",
+    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
+    apiKey: geminiKey,
+  });
+  return gemini(process.env.GEMINI_MODEL || "gemini-3.5-flash");
 }
 
 const REVIEW_SYSTEM_PROMPT = `You are an experienced educational product mentor. A teacher has written a draft PRD for a small classroom web app that will be built with Lovable. Your job is to REVIEW the draft — do not rewrite it.
