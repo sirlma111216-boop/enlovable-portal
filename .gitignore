@@ -15,9 +15,8 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-
-# Secrets — GEMINI_API_KEY가 들어 있으므로 절대 커밋하지 않음
-.env
+# 비밀 값은 .env가 아니라 .env.local에 둡니다 (*.local로 이미 gitignore 처리됨).
+# .env에는 공개 가능한 값(Supabase publishable 키 등)만 넣습니다.
 
 # Wrangler / Cloudflare
 .wrangler/
