@@ -116,6 +116,10 @@ Use this exact structure (Korean headings):
 
 // 외부 Gemini API를 사용합니다.
 // 로컬: .env.local의 GEMINI_API_KEY / 배포: Cloudflare Variables & Secrets에 등록
+//
+// 기본 모델은 gemini-3.1-flash-lite:
+// - 이 API 키에서 gemini-3.5-flash 등 일부 모델은 무료 할당량이 0이라 429로 실패함
+// - flash-lite는 할당량이 있고 응답이 빠름(약 2~3초)
 function createPrdModel() {
   const geminiKey = process.env.GEMINI_API_KEY;
   if (!geminiKey) throw new Error("Missing GEMINI_API_KEY");
@@ -124,7 +128,37 @@ function createPrdModel() {
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
     apiKey: geminiKey,
   });
-  return gemini(process.env.GEMINI_MODEL || "gemini-3.5-flash");
+  return gemini(process.env.GEMINI_MODEL || "gemini-3.1-flash-lite");
+}
+
+// generateText를 재시도·타임아웃과 함께 실행하고, 실패 원인을 한국어 메시지로 변환합니다.
+async function runPrd(system: string, prompt: string): Promise<string> {
+  const model = createPrdModel();
+  try {
+    const { text } = await generateText({
+      model,
+      system,
+      prompt,
+      maxRetries: 2,
+      abortSignal: AbortSignal.timeout(60000),
+    });
+    if (!text || !text.trim()) {
+      throw new Error("AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도해 주세요.");
+    }
+    return text;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[PRD AI]", msg);
+    if (/quota|429|exceeded|rate limit/i.test(msg)) {
+      throw new Error(
+        "AI 사용량 한도(quota)에 걸렸습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.",
+      );
+    }
+    if (/timeout|aborted|timed out/i.test(msg)) {
+      throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
+    }
+    throw new Error("AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+  }
 }
 
 const REVIEW_SYSTEM_PROMPT = `You are an experienced educational product mentor. A teacher has written a draft PRD for a small classroom web app that will be built with Lovable. Your job is to REVIEW the draft — do not rewrite it.
@@ -163,8 +197,6 @@ Use this exact structure (Korean headings):
 export const reviewPrd = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as UpgradePrdInput)
   .handler(async ({ data }) => {
-    const model = createPrdModel();
-
     const userPrompt = `모듈 2에서 가져온 배경 맥락:
 ${JSON.stringify(data.module2Context, null, 2)}
 
@@ -173,20 +205,13 @@ ${JSON.stringify(data.teacherPrd, null, 2)}
 
 위 PRD 초안을 지정된 구조로 점검해 주세요. PRD를 다시 써 주지 말고, 점검 결과만 한국어 Markdown으로 작성해 주세요.`;
 
-    const { text } = await generateText({
-      model,
-      system: REVIEW_SYSTEM_PROMPT,
-      prompt: userPrompt,
-    });
-
-    return { markdown: text };
+    const markdown = await runPrd(REVIEW_SYSTEM_PROMPT, userPrompt);
+    return { markdown };
   });
 
 export const upgradePrd = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => data as UpgradePrdInput)
   .handler(async ({ data }) => {
-    const model = createPrdModel();
-
     const userPrompt = `모듈 2에서 가져온 배경 맥락 (그대로 반복하지 말고 의미만 반영):
 ${JSON.stringify(data.module2Context, null, 2)}
 
@@ -195,11 +220,6 @@ ${JSON.stringify(data.teacherPrd, null, 2)}
 
 위 내용을 바탕으로 지정된 구조의 한국어 Markdown PRD를 작성해 주세요. 교사가 요청하지 않은 기능을 추가하지 마세요. 정보가 부족한 항목은 "추후 결정" 또는 "확인 필요"로 표시하세요.`;
 
-    const { text } = await generateText({
-      model,
-      system: SYSTEM_PROMPT,
-      prompt: userPrompt,
-    });
-
-    return { markdown: text };
+    const markdown = await runPrd(SYSTEM_PROMPT, userPrompt);
+    return { markdown };
   });

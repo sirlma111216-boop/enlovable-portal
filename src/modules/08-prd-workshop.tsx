@@ -152,7 +152,16 @@ export default function Mod08() {
 
       <Stepper current={store.step} onJump={setStep} />
 
-      <div className="mt-8">
+      <div className="mt-3 flex items-center justify-end">
+        <button
+          onClick={resetAll}
+          className="inline-flex items-center gap-1 text-xs text-muted-text hover:text-error"
+        >
+          <RotateCcw className="w-3 h-3" /> 처음부터 새로 작성 (입력값 초기화)
+        </button>
+      </div>
+
+      <div className="mt-6">
         {store.step === 1 && (
           <Step1
             hasMod02={hasMod02}
@@ -670,7 +679,12 @@ function Step4Review({
       onSaveReview(res.markdown);
     } catch (e) {
       console.error(e);
-      setError("PRD 점검 중 문제가 발생했습니다. 작성한 내용은 그대로 보관되어 있습니다. 잠시 후 다시 시도해 주세요.");
+      const msg = e instanceof Error ? e.message : "";
+      setError(
+        msg && /[가-힣]/.test(msg)
+          ? `${msg} (작성한 내용은 그대로 보관되어 있습니다.)`
+          : "PRD 점검 중 문제가 발생했습니다. 작성한 내용은 그대로 보관되어 있습니다. 잠시 후 다시 시도해 주세요.",
+      );
     } finally {
       setLoading(false);
     }
@@ -780,7 +794,12 @@ function Step5Upgrade({
       onSaveUpgraded(res.markdown);
     } catch (e) {
       console.error(e);
-      setError("PRD 업그레이드 중 문제가 발생했습니다. 작성한 내용은 그대로 보관되어 있습니다. 잠시 후 다시 시도해 주세요.");
+      const msg = e instanceof Error ? e.message : "";
+      setError(
+        msg && /[가-힣]/.test(msg)
+          ? `${msg} (작성한 내용은 그대로 보관되어 있습니다.)`
+          : "PRD 업그레이드 중 문제가 발생했습니다. 작성한 내용은 그대로 보관되어 있습니다. 잠시 후 다시 시도해 주세요.",
+      );
     } finally {
       setLoading(false);
     }
