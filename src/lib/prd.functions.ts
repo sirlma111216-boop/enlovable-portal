@@ -185,7 +185,7 @@ async function runPrd(system: string, prompt: string): Promise<string> {
     console.error("[PRD AI]", detail);
     if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(detail)) {
       throw new Error(
-        "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요. (작성한 내용은 그대로 보관됩니다.)",
+        "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요.",
       );
     }
     if (/timeout|abort|timed out/i.test(detail)) {

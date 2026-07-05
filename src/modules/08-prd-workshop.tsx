@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState } from "react";
 import { Download, Copy, CheckCheck, RotateCcw, Printer, ArrowLeft, ArrowRight, Sparkles, Check, AlertCircle, Loader2, Plus, X } from "lucide-react";
 import { Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
@@ -662,7 +662,6 @@ function Step4Review({
   const review = useServerFn(reviewPrd);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [autoStarted, setAutoStarted] = useState(false);
 
   const md = store.prdReview ?? "";
 
@@ -690,15 +689,6 @@ function Step4Review({
     }
   };
 
-  // 점검 결과가 없으면 진입 시 자동 실행
-  useEffect(() => {
-    if (!md && !autoStarted) {
-      setAutoStarted(true);
-      run();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <StepShell
       title="AI가 점검한 PRD"
@@ -711,6 +701,20 @@ function Step4Review({
       </div>
 
       <div aria-live="polite" className="min-h-[200px]">
+        {!md && !loading && !error && (
+          <div className="bg-surface-card rounded-lg p-8 text-center">
+            <p className="text-sm text-body mb-4">
+              준비되면 아래 버튼을 눌러 주세요. 버튼을 눌러야 AI 점검이 시작됩니다.
+            </p>
+            <button
+              onClick={run}
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-md bg-coral text-white hover:bg-coral-active font-medium"
+            >
+              <Sparkles className="w-4 h-4" /> AI로 점검받기
+            </button>
+          </div>
+        )}
+
         {loading && (
           <div className="bg-surface-card rounded-lg p-8 text-center">
             <Loader2 className="w-6 h-6 animate-spin text-coral mx-auto mb-3" />
@@ -777,7 +781,6 @@ function Step5Upgrade({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const [autoStarted, setAutoStarted] = useState(false);
 
   const md = store.upgradedPrd;
 
@@ -804,15 +807,6 @@ function Step5Upgrade({
       setLoading(false);
     }
   };
-
-  // Auto-run on entering step 4 if no result yet
-  useEffect(() => {
-    if (!md && !autoStarted) {
-      setAutoStarted(true);
-      run();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const copy = async () => {
     try {
@@ -853,6 +847,20 @@ function Step5Upgrade({
       </div>
 
       <div aria-live="polite" className="min-h-[200px]">
+        {!md && !loading && !error && (
+          <div className="bg-surface-card rounded-lg p-8 text-center">
+            <p className="text-sm text-body mb-4">
+              준비되면 아래 버튼을 눌러 주세요. 버튼을 눌러야 AI 업그레이드가 시작됩니다.
+            </p>
+            <button
+              onClick={run}
+              className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-md bg-coral text-white hover:bg-coral-active font-medium"
+            >
+              <Sparkles className="w-4 h-4" /> AI로 업그레이드하기
+            </button>
+          </div>
+        )}
+
         {loading && (
           <div className="bg-surface-card rounded-lg p-8 text-center">
             <Loader2 className="w-6 h-6 animate-spin text-coral mx-auto mb-3" />
