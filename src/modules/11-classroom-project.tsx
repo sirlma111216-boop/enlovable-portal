@@ -124,7 +124,11 @@ export default function Mod11() {
         </p>
       </Section>
 
-      <Section title="강사용 핵심 질문">
+      <Section
+        title="개발을 하면서 항상 기억할 핵심 질문"
+        eyebrow="꼭 기억하세요"
+        className="rounded-lg border-2 border-coral bg-surface-cream-strong p-6 sm:p-8"
+      >
         <ul className="bg-ink text-canvas rounded-lg p-6 space-y-2 list-disc list-inside leading-relaxed">
           <li>그 기능이 왜 필요한가요?</li>
           <li>이 앱은 수업의 어떤 문제를 해결하나요?</li>
