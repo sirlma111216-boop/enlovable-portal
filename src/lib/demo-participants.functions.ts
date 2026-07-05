@@ -1,23 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
-import { z } from "zod";
-
-const inputSchema = z.object({
-  playerKey: z.string().min(1).max(100),
-  classCode: z.string().min(1).max(40),
-});
-
-export const findDemoParticipant = createServerFn({ method: "POST" })
-  .inputValidator((data: unknown) => inputSchema.parse(data))
-  .handler(async ({ data }) => {
-    const { supabaseAdmin } = await import(
-      "@/integrations/supabase/client.server"
-    );
-    const { data: row, error } = await supabaseAdmin
-      .from("demo_participants")
-      .select("id, class_code, nickname, created_at, updated_at")
-      .eq("player_key", data.playerKey)
-      .eq("class_code", data.classCode)
-      .maybeSingle();
-    if (error) throw error;
-    return row;
-  });
+// 사용 중단(2026-07-04): Supabase → Firebase Firestore 전환으로 더 이상 사용하지 않습니다.
+// 대체 구현: src/services/firebaseDemoDb.ts (findParticipant / ensureParticipant)
+// 이 파일은 안전하게 삭제할 수 있습니다.
+export {};

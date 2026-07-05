@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { findDemoParticipant } from "@/lib/demo-participants.functions";
+import {
+  ensureAnonymousUser,
+  ensureParticipant,
+  findParticipant,
+  saveActivityRecord,
+  subscribeClassData,
+  fetchClassData as fetchClassDataFromDb,
+  type Participant,
+  type ActivityRecord,
+} from "@/services/firebaseDemoDb";
 import { Section } from "@/components/module-ui";
 import { toast } from "sonner";
 import {
@@ -16,28 +24,8 @@ import {
 } from "recharts";
 
 // -----------------------------------------------------------------
-// Types
+// Types (Participant / ActivityRecord는 firebaseDemoDb에서 import)
 // -----------------------------------------------------------------
-type Participant = {
-  id: string;
-  class_code: string;
-  nickname: string;
-};
-
-type ActivityRecord = {
-  id: string;
-  activity_session_id: string;
-  participant_id: string;
-  class_code: string;
-  nickname: string;
-  score: number;
-  correct_count: number;
-  wrong_count: number;
-  completed: boolean;
-  duration_seconds: number;
-  created_at: string;
-};
-
 type ClassSnapshot = {
   participants: number;
   totalActivities: number;
@@ -54,7 +42,6 @@ type ClassSnapshot = {
 // Helpers
 // -----------------------------------------------------------------
 const LS = {
-  playerKey: "vibecoding:mod09:demo:playerKey",
   classCode: "vibecoding:mod09:demo:classCode",
   nickname: "vibecoding:mod09:demo:nickname",
 };
@@ -116,7 +103,6 @@ function timeAgo(iso: string) {
 // -----------------------------------------------------------------
 export function CloudDbDemoSection() {
   const [mounted, setMounted] = useState(false);
-  const [playerKey, setPlayerKey] = useState("");
   const [me, setMe] = useState<Participant | null>(null);
 
   // form
@@ -142,111 +128,77 @@ export function CloudDbDemoSection() {
   // -----------------------------------------------------------
   useEffect(() => {
     setMounted(true);
-    let pk = localStorage.getItem(LS.playerKey);
-    if (!pk) {
-      pk = makeId("player");
-      localStorage.setItem(LS.playerKey, pk);
-    }
-    setPlayerKey(pk);
     setClassCode(localStorage.getItem(LS.classCode) ?? "");
     setNickname(localStorage.getItem(LS.nickname) ?? "");
   }, []);
 
-  // Try to find existing participant for this playerKey + classCode
+  // 저장된 클래스 코드가 있으면 익명 로그인(uid) 기준으로 기존 참가자 복귀
   useEffect(() => {
-    if (!mounted || !playerKey) return;
+    if (!mounted) return;
     const savedClass = localStorage.getItem(LS.classCode);
     if (!savedClass) return;
     (async () => {
-      const data = await findDemoParticipant({
-        data: { playerKey, classCode: savedClass },
-      });
-      if (data) {
-        setMe(data as Participant);
-        setStage("lobby");
+      try {
+        const data = await findParticipant(savedClass);
+        if (data) {
+          setMe(data);
+          setStage("lobby");
+        }
+      } catch (e) {
+        // 자동 복귀 실패는 조용히 넘어가고 참여 화면을 그대로 보여줍니다.
+        console.error(e);
       }
     })();
-  }, [mounted, playerKey]);
+  }, [mounted]);
 
   // -----------------------------------------------------------
   // Fetch class data
   // -----------------------------------------------------------
-  const fetchClassData = useCallback(
-    async (code: string) => {
-      if (!code) return;
-      setLoading(true);
-      const [{ data: parts }, { data: recs }] = await Promise.all([
-        supabase.from("demo_participants_public").select("*").eq("class_code", code),
-        supabase
-          .from("demo_activity_records")
-          .select("*")
-          .eq("class_code", code)
-          .order("created_at", { ascending: false }),
-      ]);
-      setParticipants((parts ?? []) as Participant[]);
-      setRecords((recs ?? []) as ActivityRecord[]);
+  const fetchClassData = useCallback(async (code: string) => {
+    if (!code) return;
+    setLoading(true);
+    try {
+      const { participants: parts, records: recs } =
+        await fetchClassDataFromDb(code);
+      setParticipants(parts);
+      setRecords(recs);
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : "클래스 데이터를 불러오지 못했어요.",
+      );
+    } finally {
       setLoading(false);
-    },
-    [],
-  );
+    }
+  }, []);
 
   useEffect(() => {
     if (me) fetchClassData(me.class_code);
   }, [me, fetchClassData]);
 
   // -----------------------------------------------------------
-  // Realtime subscription
+  // Realtime subscription (Firestore onSnapshot)
   // -----------------------------------------------------------
   useEffect(() => {
     if (!me) return;
     const code = me.class_code;
-    const channel = supabase
-      .channel(`class-${code}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "demo_activity_records",
-          filter: `class_code=eq.${code}`,
-        },
-        (payload) => {
-          const rec = payload.new as ActivityRecord;
-          setRecords((prev) =>
-            prev.some((r) => r.id === rec.id) ? prev : [rec, ...prev],
-          );
+    const unsubscribe = subscribeClassData(code, {
+      onParticipants: (parts) => setParticipants(parts),
+      onRecords: (all, added) => {
+        setRecords(all);
+        if (added.length > 0) {
+          const rec = added[0];
           setNewRecordId(rec.id);
           setAutoRefreshing(true);
           setTimeout(() => setAutoRefreshing(false), 1500);
-          if (rec.participant_id !== me.id) {
+          if (added.some((r) => r.participant_id !== me.id)) {
             toast("새로운 클래스 기록이 추가되었습니다.");
           }
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "demo_participants",
-          filter: `class_code=eq.${code}`,
-        },
-        (payload) => {
-          const p = payload.new as Participant;
-          setParticipants((prev) =>
-            prev.some((x) => x.id === p.id) ? prev : [...prev, p],
-          );
-        },
-      )
-      .subscribe();
-
-    // fallback poll every 15s
-    const interval = setInterval(() => fetchClassData(code), 15000);
-    return () => {
-      supabase.removeChannel(channel);
-      clearInterval(interval);
-    };
-  }, [me, fetchClassData]);
+        }
+      },
+      onError: (message) => toast.error(message),
+    });
+    return () => unsubscribe();
+  }, [me]);
 
   // -----------------------------------------------------------
   // Onboard submit
@@ -264,30 +216,18 @@ export function CloudDbDemoSection() {
       return;
     }
     setSaving(true);
-    // Participants are insert-only. Look up an existing row for this
-    // (player_key, class_code); if none, insert a new one.
-    let participant: Participant | null = null;
-    const existing = await findDemoParticipant({
-      data: { playerKey, classCode: cc },
-    });
-    if (existing) {
-      participant = existing as Participant;
-    } else {
-      const { data: inserted, error } = await supabase
-        .from("demo_participants")
-        .insert({
-          player_key: playerKey,
-          class_code: cc,
-          nickname: nn,
-        })
-        .select("id, class_code, nickname, created_at, updated_at")
-        .single();
-      if (error || !inserted) {
-        setSaving(false);
-        toast.error("참여 정보 저장에 실패했어요.");
-        return;
-      }
-      participant = inserted as Participant;
+    // 익명 로그인(uid) 기준으로 참가자를 찾고, 없으면 새로 등록합니다.
+    // 같은 기기(같은 uid)로 다시 참여하면 기존 닉네임이 유지됩니다.
+    let participant: Participant;
+    try {
+      await ensureAnonymousUser();
+      participant = await ensureParticipant(cc, nn);
+    } catch (err) {
+      setSaving(false);
+      toast.error(
+        err instanceof Error ? err.message : "참여 정보 저장에 실패했어요.",
+      );
+      return;
     }
     setSaving(false);
     localStorage.setItem(LS.classCode, cc);
@@ -368,33 +308,31 @@ export function CloudDbDemoSection() {
 
     if (!me) return;
     const sessionId = makeId("sess");
-    const { data, error } = await supabase
-      .from("demo_activity_records")
-      .insert({
-        activity_session_id: sessionId,
-        participant_id: me.id,
-        class_code: me.class_code,
+    let inserted: ActivityRecord;
+    try {
+      inserted = await saveActivityRecord({
+        classCode: me.class_code,
         nickname: me.nickname,
+        activitySessionId: sessionId,
         score,
-        correct_count: finalCorrect,
-        wrong_count: finalWrong,
+        correctCount: finalCorrect,
+        wrongCount: finalWrong,
         completed,
-        duration_seconds: duration,
-      })
-      .select()
-      .single();
-    if (error || !data) {
-      toast.error("기록 저장에 실패했어요.");
+        durationSeconds: duration,
+      });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "기록 저장에 실패했어요.");
       return;
     }
-    const inserted = data as ActivityRecord;
     setLastLocalRecordId(inserted.id);
     setNewRecordId(inserted.id);
-    // refresh
-    await fetchClassData(me.class_code);
-    // compute after using local optimistic
+    // Firestore 실시간 구독이 records를 곧바로 갱신하지만,
+    // 결과 화면 집계가 어긋나지 않도록 낙관적으로 한 건을 먼저 반영합니다.
+    setRecords((prev) =>
+      prev.some((r) => r.id === inserted.id) ? prev : [inserted, ...prev],
+    );
     setSnapshotAfter((prev) => {
-      // let the next records effect handle
+      // 이후 records effect에서 계산됩니다.
       return prev;
     });
     setStage("result");
@@ -411,12 +349,14 @@ export function CloudDbDemoSection() {
   // Aggregates for leaderboard
   // -----------------------------------------------------------
   const perPlayerAgg = useMemo(() => {
+    const NO_RECORD_DURATION = Number.MAX_SAFE_INTEGER;
     const map = new Map<
       string,
       {
         participant_id: string;
         nickname: string;
         best: number;
+        bestDuration: number;
         total: number;
         count: number;
         avg: number;
@@ -431,6 +371,7 @@ export function CloudDbDemoSection() {
           participant_id: r.participant_id,
           nickname: r.nickname,
           best: r.score,
+          bestDuration: r.duration_seconds,
           total: r.score,
           count: 1,
           avg: r.score,
@@ -438,7 +379,14 @@ export function CloudDbDemoSection() {
           completed: r.completed ? 1 : 0,
         });
       } else {
-        cur.best = Math.max(cur.best, r.score);
+        // 최고 점수 기록의 소요 시간을 함께 추적 (동점이면 더 짧은 시간 유지)
+        if (
+          r.score > cur.best ||
+          (r.score === cur.best && r.duration_seconds < cur.bestDuration)
+        ) {
+          cur.best = r.score;
+          cur.bestDuration = r.duration_seconds;
+        }
         cur.total += r.score;
         cur.count += 1;
         cur.avg = Math.round(cur.total / cur.count);
@@ -453,6 +401,7 @@ export function CloudDbDemoSection() {
           participant_id: p.id,
           nickname: p.nickname,
           best: 0,
+          bestDuration: NO_RECORD_DURATION,
           total: 0,
           count: 0,
           avg: 0,
@@ -467,7 +416,11 @@ export function CloudDbDemoSection() {
   const topByBest = useMemo(
     () =>
       [...perPlayerAgg].sort(
-        (a, b) => b.best - a.best || b.avg - a.avg || b.count - a.count,
+        (a, b) =>
+          b.best - a.best ||
+          a.bestDuration - b.bestDuration ||
+          b.avg - a.avg ||
+          b.count - a.count,
       ),
     [perPlayerAgg],
   );
@@ -533,7 +486,7 @@ export function CloudDbDemoSection() {
   if (!mounted) return null;
 
   return (
-    <Section title="Lovable Cloud 데이터베이스 저장 체험">
+    <Section title="데이터베이스 저장체험(Firebase 기반)">
       <p className="text-sm text-body mb-4 leading-relaxed">
         같은 클래스 코드로 참여한 사람들의 활동 기록이 하나의 그룹으로 묶입니다.
         데이터베이스에 새 행이 추가될 때마다 학급 전체 집계와 순위가 즉시
@@ -1088,8 +1041,8 @@ function aggType() {
   return [] as {
     participant_id: string;
     nickname: string;
-    
     best: number;
+    bestDuration: number;
     total: number;
     count: number;
     avg: number;
