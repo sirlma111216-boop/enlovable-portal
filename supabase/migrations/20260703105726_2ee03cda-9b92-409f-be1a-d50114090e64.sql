@@ -1,1 +1,0 @@
-DROP FUNCTION IF EXISTS public.find_demo_participant(text, text);
