@@ -161,26 +161,31 @@ async function runPrd(system: string, prompt: string): Promise<string> {
     }
     return text;
   } catch (e) {
-    // AI SDK는 429를 e.message가 아니라 statusCode/응답 본문에 담는 경우가 있어,
-    // 에러 객체 전체를 문자열로 만들어 원인을 판별합니다.
-    const err = e as {
-      message?: string;
-      statusCode?: number;
-      responseBody?: string;
-      data?: unknown;
+    // AI SDK는 재시도 후 에러를 중첩 구조(lastError/cause/errors)로 던지고,
+    // 429는 e.message가 아니라 statusCode/응답 본문에 담기는 경우가 많습니다.
+    // 중첩 에러를 재귀로 훑어 원인 문자열을 모읍니다.
+    const parts: string[] = [];
+    const collect = (o: unknown, depth = 0) => {
+      if (o == null || depth > 4) return;
+      if (typeof o === "string") {
+        parts.push(o);
+        return;
+      }
+      const r = o as Record<string, unknown>;
+      if (typeof r.message === "string") parts.push(r.message);
+      if (r.statusCode != null) parts.push(`status=${r.statusCode}`);
+      if (typeof r.responseBody === "string") parts.push(r.responseBody);
+      collect(r.lastError, depth + 1);
+      collect(r.cause, depth + 1);
+      if (Array.isArray(r.errors)) r.errors.forEach((x) => collect(x, depth + 1));
+      if (Array.isArray(r.data)) r.data.forEach((x) => collect(x, depth + 1));
     };
-    const detail = [
-      err?.message,
-      err?.statusCode != null ? `status=${err.statusCode}` : "",
-      err?.responseBody,
-      err?.data != null ? JSON.stringify(err.data) : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
+    collect(e);
+    const detail = parts.filter(Boolean).join(" ");
     console.error("[PRD AI]", detail);
-    if (/quota|status=429|\b429\b|exceeded|rate.?limit|too many requests/i.test(detail)) {
+    if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(detail)) {
       throw new Error(
-        "AI 사용량 한도(quota)에 걸렸습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.",
+        "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요. (작성한 내용은 그대로 보관됩니다.)",
       );
     }
     if (/timeout|abort|timed out/i.test(detail)) {
