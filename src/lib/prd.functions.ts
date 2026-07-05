@@ -1,6 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { generateText } from "ai";
-import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 
 export type UpgradePrdInput = {
   module2Context: {
@@ -114,164 +112,179 @@ Use this exact structure (Korean headings):
 ## 15. 완료 기준
 - Lovable에서 MVP가 완성되었다고 판단할 조건`;
 
-// 외부 Gemini API를 사용합니다.
-// 로컬: .env.local의 GEMINI_API_KEY / 배포: Cloudflare Variables & Secrets에 등록
-const DEFAULT_PRD_MODEL = "gemini-3.1-flash-lite";
+// ============================================================
+// AI 호출 — Vertex AI (Google Cloud)
+//
+// AI Studio용 API(generativelanguage.googleapis.com)는 호출자 IP의 지역을
+// 검사해서, Cloudflare Worker가 차단 지역(홍콩 등)을 경유하면 400으로
+// 실패했습니다(유료 등급도 동일). Vertex AI(aiplatform.googleapis.com)는
+// GCP 기업용 API라 호출자 위치 검사가 없어 이 문제가 구조적으로 없습니다.
+//
+// 프로덕션: GCP_SERVICE_ACCOUNT(서비스 계정 JSON, Cloudflare Secret)로
+//           OAuth 토큰을 발급받아 Vertex AI 호출
+// 로컬 dev: GCP_SERVICE_ACCOUNT가 없으면 GEMINI_API_KEY로 AI Studio
+//           엔드포인트 사용 (한국에서는 지역 문제 없음)
+// ============================================================
 
-// 이 API 키(무료 등급)에서 무료 할당량이 0이라 항상 429가 나는 모델들.
-// GEMINI_MODEL 환경변수가 이 중 하나로 잘못 설정돼 있어도 무시하고 안전한 기본값을 씁니다.
-// (예전에 Cloudflare에 GEMINI_MODEL=gemini-3.5-flash를 넣어둔 경우 대비)
-const QUOTA_ZERO_MODELS = new Set([
-  "gemini-3.5-flash",
-  "gemini-flash-latest",
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-001",
-]);
+const DEFAULT_PRD_MODEL = "gemini-2.5-flash-lite";
 
-function resolveModelId(): string {
-  const envModel = process.env.GEMINI_MODEL?.trim();
-  if (envModel && !QUOTA_ZERO_MODELS.has(envModel)) return envModel;
-  return DEFAULT_PRD_MODEL;
+type ServiceAccount = {
+  client_email: string;
+  private_key: string;
+  project_id: string;
+};
+
+// 액세스 토큰 캐시 (Worker isolate 생존 동안 재사용, 만료 5분 전 갱신)
+let cachedToken: { token: string; expiresAt: number } | null = null;
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function createPrdModel() {
-  const geminiKey = process.env.GEMINI_API_KEY;
-  if (!geminiKey) throw new Error("Missing GEMINI_API_KEY");
-  const gemini = createOpenAICompatible({
-    name: "gemini",
-    baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
-    apiKey: geminiKey,
+function pemToBytes(pem: string): Uint8Array {
+  const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+// 서비스 계정으로 OAuth2 액세스 토큰 발급 (JWT RS256 서명 → 토큰 교환)
+async function getVertexAccessToken(sa: ServiceAccount): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  if (cachedToken && cachedToken.expiresAt - 300 > now) return cachedToken.token;
+
+  const enc = new TextEncoder();
+  const header = base64UrlEncode(enc.encode(JSON.stringify({ alg: "RS256", typ: "JWT" })));
+  const claims = base64UrlEncode(
+    enc.encode(
+      JSON.stringify({
+        iss: sa.client_email,
+        scope: "https://www.googleapis.com/auth/cloud-platform",
+        aud: "https://oauth2.googleapis.com/token",
+        iat: now,
+        exp: now + 3600,
+      }),
+    ),
+  );
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToBytes(sa.private_key).buffer as ArrayBuffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = new Uint8Array(
+    await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, enc.encode(`${header}.${claims}`)),
+  );
+  const jwt = `${header}.${claims}.${base64UrlEncode(signature)}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `grant_type=${encodeURIComponent("urn:ietf:params:oauth:grant-type:jwt-bearer")}&assertion=${jwt}`,
   });
-  return gemini(resolveModelId());
-}
-
-// 에러 객체(중첩 포함)에서 원인 문자열을 수집합니다.
-// AI SDK는 원인을 lastError/cause/errors에 중첩해 담고, 상태코드는 statusCode에 있습니다.
-function collectErrorDetail(e: unknown): string {
-  const parts: string[] = [];
-  const collect = (o: unknown, depth = 0) => {
-    if (o == null || depth > 5) return;
-    if (typeof o === "string") {
-      parts.push(o);
-      return;
-    }
-    const r = o as Record<string, unknown>;
-    if (typeof r.name === "string") parts.push(`name=${r.name}`);
-    if (typeof r.message === "string") parts.push(r.message);
-    if (r.statusCode != null) parts.push(`status=${r.statusCode}`);
-    if (typeof r.responseBody === "string") parts.push(r.responseBody);
-    collect(r.lastError, depth + 1);
-    collect(r.cause, depth + 1);
-    if (Array.isArray(r.errors)) r.errors.forEach((x) => collect(x, depth + 1));
-    if (Array.isArray(r.data)) r.data.forEach((x) => collect(x, depth + 1));
-  };
-  collect(e);
-  let detail = parts.filter(Boolean).join(" | ");
-  if (!detail) {
-    try {
-      detail = `${String(e)} :: ${JSON.stringify(e, Object.getOwnPropertyNames((e as object) ?? {}))}`;
-    } catch {
-      detail = String(e);
-    }
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`AI 인증 토큰 발급에 실패했습니다. (${res.status}: ${t.slice(0, 160)})`);
   }
-  return detail;
+  const json = (await res.json()) as { access_token: string; expires_in?: number };
+  cachedToken = { token: json.access_token, expiresAt: now + (json.expires_in ?? 3600) };
+  return json.access_token;
 }
 
-// Gemini 무료 등급은 일부 지역(홍콩 등)에서 차단됩니다.
-// Cloudflare Worker는 호출마다 다른 엣지 IP로 나가므로, 같은 요청이
-// 어떤 때는 성공하고 어떤 때는 400 "User location is not supported"로 실패합니다.
-// → 이 에러는 즉시 재시도하면 다른 경로를 타면서 성공하는 경우가 많아 재시도 대상입니다.
-function isRetryableDetail(detail: string): boolean {
-  return /User location is not supported|FAILED_PRECONDITION|status=5\d\d|ECONNRESET|fetch failed|network/i.test(
-    detail,
+type GenerateContentResponse = {
+  candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
+  error?: { code?: number; message?: string; status?: string };
+};
+
+function extractText(json: GenerateContentResponse): string {
+  const parts = json.candidates?.[0]?.content?.parts ?? [];
+  return parts
+    .filter((p) => p.thought !== true && typeof p.text === "string")
+    .map((p) => p.text)
+    .join("")
+    .trim();
+}
+
+// generateContent 공통 호출 (Vertex와 AI Studio가 같은 요청/응답 형식 사용)
+async function callGenerateContent(
+  url: string,
+  headers: Record<string, string>,
+  system: string,
+  prompt: string,
+): Promise<string> {
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [{ role: "user", parts: [{ text: prompt }] }],
+  });
+
+  let lastError = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body,
+      });
+    } catch (e) {
+      lastError = `network: ${String(e).slice(0, 160)}`;
+      continue; // 네트워크 오류는 1회 재시도
+    }
+    const text = await res.text();
+    if (res.ok) {
+      try {
+        const out = extractText(JSON.parse(text) as GenerateContentResponse);
+        if (out) return out;
+        lastError = "AI가 빈 응답을 반환했습니다.";
+      } catch {
+        lastError = "AI 응답을 해석하지 못했습니다.";
+      }
+      continue;
+    }
+    lastError = `HTTP ${res.status}: ${text.slice(0, 220)}`;
+    console.error("[PRD AI]", lastError);
+    if (res.status === 429) {
+      throw new Error(
+        "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 잠시 후 [다시 시도]를 눌러 주세요.",
+      );
+    }
+    if (res.status < 500) break; // 4xx는 재시도 무의미
+  }
+  throw new Error(
+    `AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요. (원인: ${lastError.slice(0, 180)})`,
   );
 }
 
-// Cloudflare Workers AI 폴백.
-// Gemini 무료/유료 등급 모두 홍콩 등 일부 지역에서는 사용이 불가한데,
-// Cloudflare Worker의 아웃바운드 경로가 그 지역을 지나면 400으로 실패합니다.
-// Workers AI는 Cloudflare 내부에서 실행되므로 지역 문제가 원천적으로 없습니다.
-// (바인딩은 vite.config.ts의 nitro.cloudflare.wrangler.ai 로 주입됩니다.)
-type WorkersAiBinding = {
-  run: (
-    model: string,
-    options: { messages: { role: string; content: string }[]; max_tokens?: number },
-  ) => Promise<{ response?: string }>;
-};
-
-async function runWorkersAiFallback(system: string, prompt: string): Promise<string> {
-  // Cloudflare Workers 런타임에서만 존재하는 모듈 (로컬 dev에서는 실패 → 호출부에서 처리)
-  // 문자열 변수로 지정해 TS/Vite의 정적 해석을 피합니다.
-  const specifier = "cloudflare:workers";
-  const mod = (await import(/* @vite-ignore */ specifier)) as {
-    env?: Record<string, unknown>;
-  };
-  const ai = mod.env?.AI as WorkersAiBinding | undefined;
-  if (!ai) throw new Error("Workers AI binding(AI)이 없습니다.");
-  const res = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: prompt },
-    ],
-    max_tokens: 4096,
-  });
-  const text = (res?.response ?? "").trim();
-  if (!text) throw new Error("Workers AI가 빈 응답을 반환했습니다.");
-  return text;
-}
-
-// generateText를 지역차단·일시 오류 재시도와 함께 실행하고,
-// Gemini가 끝내 실패하면 Workers AI로 폴백합니다.
 async function runPrd(system: string, prompt: string): Promise<string> {
-  const MAX_ATTEMPTS = 3;
-  let lastDetail = "";
+  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_PRD_MODEL;
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  const saRaw = process.env.GCP_SERVICE_ACCOUNT;
+  if (saRaw) {
+    let sa: ServiceAccount;
     try {
-      const model = createPrdModel();
-      const { text } = await generateText({
-        model,
-        system,
-        prompt,
-        maxRetries: 0, // 재시도는 이 루프에서 직접 제어
-      });
-      if (text && text.trim()) return text;
-      lastDetail = "empty response";
-    } catch (e) {
-      lastDetail = collectErrorDetail(e);
-      console.error(`[PRD AI] attempt ${attempt}/${MAX_ATTEMPTS}:`, lastDetail.slice(0, 300));
-      if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(lastDetail)) {
-        throw new Error(
-          "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요.",
-        );
-      }
-      if (!isRetryableDetail(lastDetail)) break; // 재시도해도 소용없는 오류
+      sa = JSON.parse(saRaw) as ServiceAccount;
+    } catch {
+      throw new Error("GCP_SERVICE_ACCOUNT 값이 올바른 JSON 형식이 아닙니다.");
     }
-    if (attempt < MAX_ATTEMPTS) {
-      await new Promise((r) => setTimeout(r, 300 * attempt));
+    if (!sa.client_email || !sa.private_key || !sa.project_id) {
+      throw new Error("GCP_SERVICE_ACCOUNT JSON에 필수 필드가 없습니다.");
     }
+    const token = await getVertexAccessToken(sa);
+    const url = `https://aiplatform.googleapis.com/v1/projects/${sa.project_id}/locations/global/publishers/google/models/${model}:generateContent`;
+    return callGenerateContent(url, { Authorization: `Bearer ${token}` }, system, prompt);
   }
 
-  // Gemini가 지역 차단 등으로 끝내 실패 → Workers AI 폴백 (지역 무관)
-  let fallbackDetail = "";
-  try {
-    const text = await runWorkersAiFallback(system, prompt);
-    console.warn("[PRD AI] Gemini 실패 → Workers AI 폴백으로 생성함");
-    return text;
-  } catch (fe) {
-    fallbackDetail = collectErrorDetail(fe);
-    console.error("[PRD AI] 폴백 실패:", fallbackDetail.slice(0, 200));
+  // 로컬 개발 전용 경로 (배포 환경에는 GCP_SERVICE_ACCOUNT가 항상 존재)
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Missing GCP_SERVICE_ACCOUNT (로컬 개발은 GEMINI_API_KEY 필요)");
   }
-
-  if (/User location is not supported|FAILED_PRECONDITION/i.test(lastDetail)) {
-    throw new Error(
-      `AI 접속 경로가 일시 차단되었고 예비 AI도 실패했습니다. [다시 시도]를 눌러 주세요. (예비: ${fallbackDetail.slice(0, 120)})`,
-    );
-  }
-  if (/timeout|abort|timed out/i.test(lastDetail)) {
-    throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
-  }
-  throw new Error(`AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요. (원인: ${lastDetail.slice(0, 160)})`);
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
+  return callGenerateContent(url, { "x-goog-api-key": apiKey }, system, prompt);
 }
 
 const REVIEW_SYSTEM_PROMPT = `You are an experienced educational product mentor. A teacher has written a draft PRD for a small classroom web app that will be built with Lovable. Your job is to REVIEW the draft — do not rewrite it.

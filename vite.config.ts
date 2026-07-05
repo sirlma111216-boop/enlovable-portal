@@ -12,13 +12,4 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
-  nitro: {
-    cloudflare: {
-      // 생성되는 wrangler.json에 병합됨 — Workers AI 바인딩(Gemini 지역 차단 시 폴백용)
-      // (래퍼의 TS 타입에는 wrangler 키가 없지만 nitro가 실제로 지원하므로 캐스트)
-      wrangler: {
-        ai: { binding: "AI" },
-      },
-    } as { nodeCompat?: boolean; deployConfig?: boolean },
-  },
 });
