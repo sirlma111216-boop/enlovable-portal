@@ -116,10 +116,24 @@ Use this exact structure (Korean headings):
 
 // 외부 Gemini API를 사용합니다.
 // 로컬: .env.local의 GEMINI_API_KEY / 배포: Cloudflare Variables & Secrets에 등록
-//
-// 기본 모델은 gemini-3.1-flash-lite:
-// - 이 API 키에서 gemini-3.5-flash 등 일부 모델은 무료 할당량이 0이라 429로 실패함
-// - flash-lite는 할당량이 있고 응답이 빠름(약 2~3초)
+const DEFAULT_PRD_MODEL = "gemini-3.1-flash-lite";
+
+// 이 API 키(무료 등급)에서 무료 할당량이 0이라 항상 429가 나는 모델들.
+// GEMINI_MODEL 환경변수가 이 중 하나로 잘못 설정돼 있어도 무시하고 안전한 기본값을 씁니다.
+// (예전에 Cloudflare에 GEMINI_MODEL=gemini-3.5-flash를 넣어둔 경우 대비)
+const QUOTA_ZERO_MODELS = new Set([
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
+]);
+
+function resolveModelId(): string {
+  const envModel = process.env.GEMINI_MODEL?.trim();
+  if (envModel && !QUOTA_ZERO_MODELS.has(envModel)) return envModel;
+  return DEFAULT_PRD_MODEL;
+}
+
 function createPrdModel() {
   const geminiKey = process.env.GEMINI_API_KEY;
   if (!geminiKey) throw new Error("Missing GEMINI_API_KEY");
@@ -128,7 +142,7 @@ function createPrdModel() {
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai",
     apiKey: geminiKey,
   });
-  return gemini(process.env.GEMINI_MODEL || "gemini-3.1-flash-lite");
+  return gemini(resolveModelId());
 }
 
 // generateText를 재시도·타임아웃과 함께 실행하고, 실패 원인을 한국어 메시지로 변환합니다.
@@ -147,14 +161,29 @@ async function runPrd(system: string, prompt: string): Promise<string> {
     }
     return text;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error("[PRD AI]", msg);
-    if (/quota|429|exceeded|rate limit/i.test(msg)) {
+    // AI SDK는 429를 e.message가 아니라 statusCode/응답 본문에 담는 경우가 있어,
+    // 에러 객체 전체를 문자열로 만들어 원인을 판별합니다.
+    const err = e as {
+      message?: string;
+      statusCode?: number;
+      responseBody?: string;
+      data?: unknown;
+    };
+    const detail = [
+      err?.message,
+      err?.statusCode != null ? `status=${err.statusCode}` : "",
+      err?.responseBody,
+      err?.data != null ? JSON.stringify(err.data) : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    console.error("[PRD AI]", detail);
+    if (/quota|status=429|\b429\b|exceeded|rate.?limit|too many requests/i.test(detail)) {
       throw new Error(
         "AI 사용량 한도(quota)에 걸렸습니다. 잠시 후 다시 시도하거나 관리자에게 문의해 주세요.",
       );
     }
-    if (/timeout|aborted|timed out/i.test(msg)) {
+    if (/timeout|abort|timed out/i.test(detail)) {
       throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
     }
     throw new Error("AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.");
