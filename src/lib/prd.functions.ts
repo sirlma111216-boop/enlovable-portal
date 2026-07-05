@@ -187,10 +187,43 @@ function isRetryableDetail(detail: string): boolean {
   );
 }
 
+// Cloudflare Workers AI 폴백.
+// Gemini 무료/유료 등급 모두 홍콩 등 일부 지역에서는 사용이 불가한데,
+// Cloudflare Worker의 아웃바운드 경로가 그 지역을 지나면 400으로 실패합니다.
+// Workers AI는 Cloudflare 내부에서 실행되므로 지역 문제가 원천적으로 없습니다.
+// (바인딩은 vite.config.ts의 nitro.cloudflare.wrangler.ai 로 주입됩니다.)
+type WorkersAiBinding = {
+  run: (
+    model: string,
+    options: { messages: { role: string; content: string }[]; max_tokens?: number },
+  ) => Promise<{ response?: string }>;
+};
+
+async function runWorkersAiFallback(system: string, prompt: string): Promise<string> {
+  // Cloudflare Workers 런타임에서만 존재하는 모듈 (로컬 dev에서는 실패 → 호출부에서 처리)
+  // 문자열 변수로 지정해 TS/Vite의 정적 해석을 피합니다.
+  const specifier = "cloudflare:workers";
+  const mod = (await import(/* @vite-ignore */ specifier)) as {
+    env?: Record<string, unknown>;
+  };
+  const ai = mod.env?.AI as WorkersAiBinding | undefined;
+  if (!ai) throw new Error("Workers AI binding(AI)이 없습니다.");
+  const res = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: prompt },
+    ],
+    max_tokens: 4096,
+  });
+  const text = (res?.response ?? "").trim();
+  if (!text) throw new Error("Workers AI가 빈 응답을 반환했습니다.");
+  return text;
+}
+
 // generateText를 지역차단·일시 오류 재시도와 함께 실행하고,
-// 실패 원인을 한국어 메시지로 변환합니다.
+// Gemini가 끝내 실패하면 Workers AI로 폴백합니다.
 async function runPrd(system: string, prompt: string): Promise<string> {
-  const MAX_ATTEMPTS = 4;
+  const MAX_ATTEMPTS = 3;
   let lastDetail = "";
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
@@ -215,13 +248,24 @@ async function runPrd(system: string, prompt: string): Promise<string> {
       if (!isRetryableDetail(lastDetail)) break; // 재시도해도 소용없는 오류
     }
     if (attempt < MAX_ATTEMPTS) {
-      await new Promise((r) => setTimeout(r, 400 * attempt));
+      await new Promise((r) => setTimeout(r, 300 * attempt));
     }
+  }
+
+  // Gemini가 지역 차단 등으로 끝내 실패 → Workers AI 폴백 (지역 무관)
+  let fallbackDetail = "";
+  try {
+    const text = await runWorkersAiFallback(system, prompt);
+    console.warn("[PRD AI] Gemini 실패 → Workers AI 폴백으로 생성함");
+    return text;
+  } catch (fe) {
+    fallbackDetail = collectErrorDetail(fe);
+    console.error("[PRD AI] 폴백 실패:", fallbackDetail.slice(0, 200));
   }
 
   if (/User location is not supported|FAILED_PRECONDITION/i.test(lastDetail)) {
     throw new Error(
-      "AI 제공자가 현재 서버 접속 경로를 일시적으로 차단했습니다. [다시 시도]를 눌러 주세요. 반복되면 잠시 후 다시 이용해 주세요.",
+      `AI 접속 경로가 일시 차단되었고 예비 AI도 실패했습니다. [다시 시도]를 눌러 주세요. (예비: ${fallbackDetail.slice(0, 120)})`,
     );
   }
   if (/timeout|abort|timed out/i.test(lastDetail)) {
