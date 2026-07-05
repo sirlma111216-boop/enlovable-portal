@@ -145,16 +145,15 @@ function createPrdModel() {
   return gemini(resolveModelId());
 }
 
-// generateText를 재시도·타임아웃과 함께 실행하고, 실패 원인을 한국어 메시지로 변환합니다.
+// generateText를 재시도와 함께 실행하고, 실패 원인을 한국어 메시지로 변환합니다.
 async function runPrd(system: string, prompt: string): Promise<string> {
-  const model = createPrdModel();
   try {
+    const model = createPrdModel();
     const { text } = await generateText({
       model,
       system,
       prompt,
       maxRetries: 2,
-      abortSignal: AbortSignal.timeout(60000),
     });
     if (!text || !text.trim()) {
       throw new Error("AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도해 주세요.");
@@ -166,12 +165,13 @@ async function runPrd(system: string, prompt: string): Promise<string> {
     // 중첩 에러를 재귀로 훑어 원인 문자열을 모읍니다.
     const parts: string[] = [];
     const collect = (o: unknown, depth = 0) => {
-      if (o == null || depth > 4) return;
+      if (o == null || depth > 5) return;
       if (typeof o === "string") {
         parts.push(o);
         return;
       }
       const r = o as Record<string, unknown>;
+      if (typeof r.name === "string") parts.push(`name=${r.name}`);
       if (typeof r.message === "string") parts.push(r.message);
       if (r.statusCode != null) parts.push(`status=${r.statusCode}`);
       if (typeof r.responseBody === "string") parts.push(r.responseBody);
@@ -181,7 +181,14 @@ async function runPrd(system: string, prompt: string): Promise<string> {
       if (Array.isArray(r.data)) r.data.forEach((x) => collect(x, depth + 1));
     };
     collect(e);
-    const detail = parts.filter(Boolean).join(" ");
+    let detail = parts.filter(Boolean).join(" | ");
+    if (!detail) {
+      try {
+        detail = `${String(e)} :: ${JSON.stringify(e, Object.getOwnPropertyNames((e as object) ?? {}))}`;
+      } catch {
+        detail = String(e);
+      }
+    }
     console.error("[PRD AI]", detail);
     if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(detail)) {
       throw new Error(
@@ -191,7 +198,8 @@ async function runPrd(system: string, prompt: string): Promise<string> {
     if (/timeout|abort|timed out/i.test(detail)) {
       throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
     }
-    throw new Error("AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요.");
+    // TEMP 진단: 실제 원인을 그대로 노출 (원인 파악 후 일반 메시지로 되돌림)
+    throw new Error(`AI 호출 실패 진단: ${detail.slice(0, 350)}`);
   }
 }
 
