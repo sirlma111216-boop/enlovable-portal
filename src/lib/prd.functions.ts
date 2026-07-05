@@ -145,62 +145,89 @@ function createPrdModel() {
   return gemini(resolveModelId());
 }
 
-// generateText를 재시도와 함께 실행하고, 실패 원인을 한국어 메시지로 변환합니다.
-async function runPrd(system: string, prompt: string): Promise<string> {
-  try {
-    const model = createPrdModel();
-    const { text } = await generateText({
-      model,
-      system,
-      prompt,
-      maxRetries: 2,
-    });
-    if (!text || !text.trim()) {
-      throw new Error("AI가 빈 응답을 반환했습니다. 잠시 후 다시 시도해 주세요.");
+// 에러 객체(중첩 포함)에서 원인 문자열을 수집합니다.
+// AI SDK는 원인을 lastError/cause/errors에 중첩해 담고, 상태코드는 statusCode에 있습니다.
+function collectErrorDetail(e: unknown): string {
+  const parts: string[] = [];
+  const collect = (o: unknown, depth = 0) => {
+    if (o == null || depth > 5) return;
+    if (typeof o === "string") {
+      parts.push(o);
+      return;
     }
-    return text;
-  } catch (e) {
-    // AI SDK는 재시도 후 에러를 중첩 구조(lastError/cause/errors)로 던지고,
-    // 429는 e.message가 아니라 statusCode/응답 본문에 담기는 경우가 많습니다.
-    // 중첩 에러를 재귀로 훑어 원인 문자열을 모읍니다.
-    const parts: string[] = [];
-    const collect = (o: unknown, depth = 0) => {
-      if (o == null || depth > 5) return;
-      if (typeof o === "string") {
-        parts.push(o);
-        return;
-      }
-      const r = o as Record<string, unknown>;
-      if (typeof r.name === "string") parts.push(`name=${r.name}`);
-      if (typeof r.message === "string") parts.push(r.message);
-      if (r.statusCode != null) parts.push(`status=${r.statusCode}`);
-      if (typeof r.responseBody === "string") parts.push(r.responseBody);
-      collect(r.lastError, depth + 1);
-      collect(r.cause, depth + 1);
-      if (Array.isArray(r.errors)) r.errors.forEach((x) => collect(x, depth + 1));
-      if (Array.isArray(r.data)) r.data.forEach((x) => collect(x, depth + 1));
-    };
-    collect(e);
-    let detail = parts.filter(Boolean).join(" | ");
-    if (!detail) {
-      try {
-        detail = `${String(e)} :: ${JSON.stringify(e, Object.getOwnPropertyNames((e as object) ?? {}))}`;
-      } catch {
-        detail = String(e);
-      }
+    const r = o as Record<string, unknown>;
+    if (typeof r.name === "string") parts.push(`name=${r.name}`);
+    if (typeof r.message === "string") parts.push(r.message);
+    if (r.statusCode != null) parts.push(`status=${r.statusCode}`);
+    if (typeof r.responseBody === "string") parts.push(r.responseBody);
+    collect(r.lastError, depth + 1);
+    collect(r.cause, depth + 1);
+    if (Array.isArray(r.errors)) r.errors.forEach((x) => collect(x, depth + 1));
+    if (Array.isArray(r.data)) r.data.forEach((x) => collect(x, depth + 1));
+  };
+  collect(e);
+  let detail = parts.filter(Boolean).join(" | ");
+  if (!detail) {
+    try {
+      detail = `${String(e)} :: ${JSON.stringify(e, Object.getOwnPropertyNames((e as object) ?? {}))}`;
+    } catch {
+      detail = String(e);
     }
-    console.error("[PRD AI]", detail);
-    if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(detail)) {
-      throw new Error(
-        "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요.",
-      );
-    }
-    if (/timeout|abort|timed out/i.test(detail)) {
-      throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
-    }
-    // TEMP 진단: 실제 원인을 그대로 노출 (원인 파악 후 일반 메시지로 되돌림)
-    throw new Error(`AI 호출 실패 진단: ${detail.slice(0, 350)}`);
   }
+  return detail;
+}
+
+// Gemini 무료 등급은 일부 지역(홍콩 등)에서 차단됩니다.
+// Cloudflare Worker는 호출마다 다른 엣지 IP로 나가므로, 같은 요청이
+// 어떤 때는 성공하고 어떤 때는 400 "User location is not supported"로 실패합니다.
+// → 이 에러는 즉시 재시도하면 다른 경로를 타면서 성공하는 경우가 많아 재시도 대상입니다.
+function isRetryableDetail(detail: string): boolean {
+  return /User location is not supported|FAILED_PRECONDITION|status=5\d\d|ECONNRESET|fetch failed|network/i.test(
+    detail,
+  );
+}
+
+// generateText를 지역차단·일시 오류 재시도와 함께 실행하고,
+// 실패 원인을 한국어 메시지로 변환합니다.
+async function runPrd(system: string, prompt: string): Promise<string> {
+  const MAX_ATTEMPTS = 4;
+  let lastDetail = "";
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const model = createPrdModel();
+      const { text } = await generateText({
+        model,
+        system,
+        prompt,
+        maxRetries: 0, // 재시도는 이 루프에서 직접 제어
+      });
+      if (text && text.trim()) return text;
+      lastDetail = "empty response";
+    } catch (e) {
+      lastDetail = collectErrorDetail(e);
+      console.error(`[PRD AI] attempt ${attempt}/${MAX_ATTEMPTS}:`, lastDetail.slice(0, 300));
+      if (/quota|status=429|\b429\b|exceeded|resource_exhausted|rate.?limit|too many requests/i.test(lastDetail)) {
+        throw new Error(
+          "지금 AI 사용량이 몰려 잠시 한도(quota)에 걸렸습니다. 20~30초 후 [다시 시도]를 눌러 주세요.",
+        );
+      }
+      if (!isRetryableDetail(lastDetail)) break; // 재시도해도 소용없는 오류
+    }
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, 400 * attempt));
+    }
+  }
+
+  if (/User location is not supported|FAILED_PRECONDITION/i.test(lastDetail)) {
+    throw new Error(
+      "AI 제공자가 현재 서버 접속 경로를 일시적으로 차단했습니다. [다시 시도]를 눌러 주세요. 반복되면 잠시 후 다시 이용해 주세요.",
+    );
+  }
+  if (/timeout|abort|timed out/i.test(lastDetail)) {
+    throw new Error("AI 응답이 지연되어 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.");
+  }
+  throw new Error(`AI 호출에 실패했습니다. 잠시 후 다시 시도해 주세요. (원인: ${lastDetail.slice(0, 160)})`);
 }
 
 const REVIEW_SYSTEM_PROMPT = `You are an experienced educational product mentor. A teacher has written a draft PRD for a small classroom web app that will be built with Lovable. Your job is to REVIEW the draft — do not rewrite it.
