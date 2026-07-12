@@ -31,9 +31,19 @@ function HomePage() {
     <div className="max-w-5xl mx-auto px-5 sm:px-8 py-10 sm:py-16">
       {/* HERO */}
       <section className="mb-16">
-        <p className="text-xs sm:text-sm uppercase tracking-widest text-muted-text font-medium mb-4 spike">
-          {courseMeta.category}
-        </p>
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <p className="text-xs sm:text-sm uppercase tracking-widest text-muted-text font-medium spike">
+            {courseMeta.category}
+          </p>
+          <a
+            href="https://labbitory.com/lecture-teacher"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 inline-flex items-center px-4 py-2 rounded-pill bg-coral text-white text-sm font-medium hover:bg-coral-active transition-colors"
+          >
+            labbitory.com
+          </a>
+        </div>
         <h1 className="serif text-5xl sm:text-7xl leading-[1.05] mb-4">
           {courseMeta.title}
         </h1>
